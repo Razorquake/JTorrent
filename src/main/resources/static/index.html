@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JTorrent WebSocket Test</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            color: white;
+            text-align: center;
+            margin-bottom: 30px;
+            font-size: 2.5em;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+
+        .status-bar {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+
+        .status-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 10px;
+        }
+
+        .status-indicator.connected {
+            background-color: #4CAF50;
+            box-shadow: 0 0 10px #4CAF50;
+        }
+
+        .status-indicator.disconnected {
+            background-color: #f44336;
+        }
+
+        .cards {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .card {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+
+        .card h2 {
+            margin-bottom: 15px;
+            color: #667eea;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 10px;
+        }
+
+        .torrent-item {
+            background: #f5f5f5;
+            padding: 15px;
+            margin-bottom: 10px;
+            border-radius: 5px;
+            border-left: 4px solid #667eea;
+        }
+
+        .torrent-name {
+            font-weight: bold;
+            font-size: 1.1em;
+            margin-bottom: 8px;
+            color: #333;
+        }
+
+        .torrent-details {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 5px;
+            font-size: 0.9em;
+            color: #666;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 20px;
+            background: #e0e0e0;
+            border-radius: 10px;
+            overflow: hidden;
+            margin: 10px 0;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            transition: width 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 0.8em;
+            font-weight: bold;
+        }
+
+        .stat-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 15px;
+        }
+
+        .stat-item {
+            background: #f5f5f5;
+            padding: 15px;
+            border-radius: 5px;
+            text-align: center;
+        }
+
+        .stat-label {
+            font-size: 0.9em;
+            color: #666;
+            margin-bottom: 5px;
+        }
+
+        .stat-value {
+            font-size: 1.5em;
+            font-weight: bold;
+            color: #667eea;
+        }
+
+        .notification {
+            background: #4CAF50;
+            color: white;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 10px;
+            animation: slideIn 0.3s ease;
+        }
+
+        @keyframes slideIn {
+            from {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+
+        .empty-state {
+            text-align: center;
+            color: #999;
+            padding: 40px;
+        }
+
+        .btn {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 1em;
+            transition: background 0.3s;
+        }
+
+        .btn:hover {
+            background: #764ba2;
+        }
+
+        code {
+            background: #f5f5f5;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Courier New', monospace;
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>🚀 JTorrent WebSocket Monitor</h1>
+
+    <div class="status-bar">
+        <span class="status-indicator" id="statusIndicator"></span>
+        <strong>Status:</strong> <span id="statusText">Connecting...</span>
+        <span style="float: right;">Updates: <span id="updateCount">0</span></span>
+    </div>
+
+    <div class="cards">
+        <div class="card">
+            <h2>📊 Statistics</h2>
+            <div class="stat-grid">
+                <div class="stat-item">
+                    <div class="stat-label">Total Torrents</div>
+                    <div class="stat-value" id="totalTorrents">0</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">Active</div>
+                    <div class="stat-value" id="activeTorrents">0</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">Download Speed</div>
+                    <div class="stat-value" id="downloadSpeed">0 KB/s</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">Upload Speed</div>
+                    <div class="stat-value" id="uploadSpeed">0 KB/s</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>🔔 Notifications</h2>
+            <div id="notifications">
+                <div class="empty-state">No notifications yet</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>📥 Active Torrents</h2>
+        <div id="torrents">
+            <div class="empty-state">No torrents found. Add a torrent to see it here!</div>
+        </div>
+    </div>
+</div>
+
+<!-- SockJS and STOMP libraries -->
+<script src="https://cdn.jsdelivr.net/npm/sockjs-client@1/dist/sockjs.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/stompjs@2.3.3/lib/stomp.min.js"></script>
+
+<script>
+    let stompClient = null;
+    let updateCount = 0;
+    let notificationCount = 0;
+
+    // Connect to WebSocket
+    function connect() {
+        console.log('Connecting to WebSocket...');
+
+        // Create SockJS connection
+        const socket = new SockJS('/ws');
+        stompClient = Stomp.over(socket);
+
+        // Connect
+        stompClient.connect({}, function(frame) {
+            console.log('Connected: ' + frame);
+            updateStatus(true);
+
+            // Subscribe to all torrents
+            stompClient.subscribe('/topic/torrents', function(message) {
+                const torrents = JSON.parse(message.body);
+                updateTorrentsList(torrents);
+                updateCount++;
+                document.getElementById('updateCount').textContent = updateCount;
+            });
+
+            // Subscribe to statistics
+            stompClient.subscribe('/topic/stats', function(message) {
+                const stats = JSON.parse(message.body);
+                updateStatistics(stats);
+            });
+
+            // Subscribe to notifications
+            stompClient.subscribe('/topic/notifications', function(message) {
+                const notification = JSON.parse(message.body);
+                addNotification(notification);
+            });
+
+        }, function(error) {
+            console.error('Connection error:', error);
+            updateStatus(false);
+            // Try to reconnect after 5 seconds
+            setTimeout(connect, 5000);
+        });
+    }
+
+    function updateStatus(connected) {
+        const indicator = document.getElementById('statusIndicator');
+        const text = document.getElementById('statusText');
+
+        if (connected) {
+            indicator.classList.add('connected');
+            indicator.classList.remove('disconnected');
+            text.textContent = 'Connected ✓';
+        } else {
+            indicator.classList.remove('connected');
+            indicator.classList.add('disconnected');
+            text.textContent = 'Disconnected (retrying...)';
+        }
+    }
+
+    function updateTorrentsList(torrents) {
+        const container = document.getElementById('torrents');
+
+        if (torrents.length === 0) {
+            container.innerHTML = '<div class="empty-state">No torrents found. Add a torrent to see it here!</div>';
+            return;
+        }
+
+        container.innerHTML = torrents.map(torrent => `
+                <div class="torrent-item">
+                    <div class="torrent-name">${torrent.name}</div>
+                    <div class="progress-bar">
+                        <div class="progress-fill" style="width: ${torrent.progress}%">
+                            ${torrent.progress.toFixed(1)}%
+                        </div>
+                    </div>
+                    <div class="torrent-details">
+                        <div>Status: <strong>${torrent.status}</strong></div>
+                        <div>Size: <strong>${formatBytes(torrent.totalSize)}</strong></div>
+                        <div>↓ ${formatBytes(torrent.downloadSpeed)}/s</div>
+                        <div>↑ ${formatBytes(torrent.uploadSpeed)}/s</div>
+                        <div>Peers: <strong>${torrent.peers}</strong></div>
+                        <div>Seeds: <strong>${torrent.seeds}</strong></div>
+                    </div>
+                </div>
+            `).join('');
+    }
+
+    function updateStatistics(stats) {
+        document.getElementById('totalTorrents').textContent = stats.totalTorrents || 0;
+        document.getElementById('activeTorrents').textContent = stats.activeTorrents || 0;
+        document.getElementById('downloadSpeed').textContent = formatBytes(stats.currentDownloadSpeed) + '/s';
+        document.getElementById('uploadSpeed').textContent = formatBytes(stats.currentUploadSpeed) + '/s';
+    }
+
+    function addNotification(notification) {
+        const container = document.getElementById('notifications');
+
+        // Remove empty state
+        if (container.querySelector('.empty-state')) {
+            container.innerHTML = '';
+        }
+
+        const notif = document.createElement('div');
+        notif.className = 'notification';
+        notif.textContent = notification.message;
+        container.insertBefore(notif, container.firstChild);
+
+        // Keep only last 5 notifications
+        while (container.children.length > 5) {
+            container.removeChild(container.lastChild);
+        }
+    }
+
+    function formatBytes(bytes) {
+        if (!bytes || bytes === 0) return '0 B';
+        const k = 1024;
+        const sizes = ['B', 'KB', 'MB', 'GB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return (bytes / Math.pow(k, i)).toFixed(2) + ' ' + sizes[i];
+    }
+
+    // Connect when page loads
+    connect();
+</script>
+</body>
+</html>

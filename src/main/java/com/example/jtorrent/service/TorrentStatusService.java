@@ -30,6 +30,7 @@ public class TorrentStatusService {
 
     private final TorrentSessionManager sessionManager;
     private final TorrentRepository torrentRepository;
+    private final TorrentWebSocketService webSocketService;
     private final TorrentFileRepository torrentFileRepository;
 
     /**
@@ -107,6 +108,7 @@ public class TorrentStatusService {
                     if (torrent.getCompletedDate() == null) {
                         torrent.setCompletedDate(LocalDateTime.now());
                         log.info("Torrent completed: {}", torrent.getName());
+                        webSocketService.notifyTorrentCompleted(torrent.getId(), torrent.getName());
                     }
                 }
             }

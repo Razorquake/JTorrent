@@ -24,7 +24,6 @@ import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.IntStream;
-import java.util.stream.LongStream;
 
 /**
  * Main service for torrent operations including adding, removing, and managing torrents.
@@ -40,6 +39,7 @@ public class TorrentService {
     private final TorrentRepository torrentRepository;
     private final TorrentFileRepository torrentFileRepository;
     private final TorrentMapper torrentMapper;
+    private final TorrentWebSocketService webSocketService;
 
     /**
      * Add a torrent from a magnet link or .torrent file.
@@ -113,7 +113,7 @@ public class TorrentService {
             torrent = torrentRepository.save(torrent);
 
             log.info("Torrent added successfully: {} ({})", torrent.getName(), infoHash);
-
+            webSocketService.notifyTorrentAdded(torrent.getId());
             // Build response
             return AddTorrentFileResponse.builder()
                     .torrentId(torrent.getId())
@@ -588,6 +588,7 @@ public class TorrentService {
         torrentRepository.delete(torrent);
 
         log.info("Torrent removed: {} ({}), files deleted: {}", torrent.getName(), id, deleteFiles);
+        webSocketService.notifyTorrentRemoved(id);
         return new MessageResponse("Torrent removed successfully");
     }
 }
