@@ -18,35 +18,35 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(TorrentExceptions.TorrentNotFoundException.class)
     public ResponseEntity<ErrorResponse> handleTorrentNotFound(TorrentExceptions.TorrentNotFoundException ex) {
-        log.error("Torrent not found", ex);
+        logClientError("Torrent not found", ex);
         return ResponseEntity.status(HttpStatus.NOT_FOUND)
                 .body(new ErrorResponse(HttpStatus.NOT_FOUND.value(), ex.getMessage(), LocalDateTime.now()));
     }
 
     @ExceptionHandler(TorrentExceptions.TorrentAlreadyExistsException.class)
     public ResponseEntity<ErrorResponse> handleTorrentAlreadyExists(TorrentExceptions.TorrentAlreadyExistsException ex) {
-        log.error("Torrent already exists", ex);
+        logClientError("Torrent already exists", ex);
         return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(new ErrorResponse(HttpStatus.CONFLICT.value(), ex.getMessage(), LocalDateTime.now()));
     }
 
     @ExceptionHandler(TorrentExceptions.TorrentNotActiveException.class)
     public ResponseEntity<ErrorResponse> handleTorrentNotActive(TorrentExceptions.TorrentNotActiveException ex) {
-        log.error("Torrent not active", ex);
+        logClientError("Torrent not active", ex);
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                 .body(new ErrorResponse(HttpStatus.BAD_REQUEST.value(), ex.getMessage(), LocalDateTime.now()));
     }
 
     @ExceptionHandler(TorrentExceptions.MaxConcurrentDownloadsException.class)
     public ResponseEntity<ErrorResponse> handleMaxConcurrentDownloads(TorrentExceptions.MaxConcurrentDownloadsException ex) {
-        log.error("Max concurrent downloads reached", ex);
+        logClientError("Max concurrent downloads reached", ex);
         return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
                 .body(new ErrorResponse(HttpStatus.TOO_MANY_REQUESTS.value(), ex.getMessage(), LocalDateTime.now()));
     }
 
     @ExceptionHandler(TorrentExceptions.InvalidMagnetLinkException.class)
     public ResponseEntity<ErrorResponse> handleInvalidMagnetLink(TorrentExceptions.InvalidMagnetLinkException ex) {
-        log.error("Invalid magnet link", ex);
+        logClientError("Invalid magnet link", ex);
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                 .body(new ErrorResponse(HttpStatus.BAD_REQUEST.value(), ex.getMessage(), LocalDateTime.now()));
     }
@@ -60,14 +60,14 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<ErrorResponse> handleIllegalArgument(IllegalArgumentException ex) {
-        log.error("Illegal argument", ex);
+        logClientError("Illegal argument", ex);
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                 .body(new ErrorResponse(HttpStatus.BAD_REQUEST.value(), ex.getMessage(), LocalDateTime.now()));
     }
 
     @ExceptionHandler(IllegalStateException.class)
     public ResponseEntity<ErrorResponse> handleIllegalState(IllegalStateException ex) {
-        log.error("Illegal state", ex);
+        logClientError("Illegal state", ex);
         return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(new ErrorResponse(HttpStatus.CONFLICT.value(), ex.getMessage(), LocalDateTime.now()));
     }
@@ -92,6 +92,13 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(new ErrorResponse(HttpStatus.INTERNAL_SERVER_ERROR.value(),
                         "An unexpected error occurred: " + ex.getMessage(), LocalDateTime.now()));
+    }
+
+    private void logClientError(String message, Exception ex) {
+        log.warn("{}: {}", message, ex.getMessage());
+        if (log.isDebugEnabled()) {
+            log.debug("Client error details", ex);
+        }
     }
 
     public record ErrorResponse(int status, String message, LocalDateTime timestamp) {}

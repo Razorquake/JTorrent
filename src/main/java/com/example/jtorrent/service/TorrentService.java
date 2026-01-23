@@ -13,6 +13,7 @@ import com.frostwire.jlibtorrent.*;
 import com.frostwire.jlibtorrent.alerts.Alert;
 import com.frostwire.jlibtorrent.alerts.AlertType;
 import com.frostwire.jlibtorrent.alerts.MetadataReceivedAlert;
+import com.frostwire.jlibtorrent.swig.torrent_flags_t;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -49,10 +50,14 @@ public class TorrentService {
      */
     @Transactional
     public AddTorrentFileResponse addTorrent(AddTorrentRequest request) {
-        log.info("Adding torrent from request: {}", request.getMagnetLink());
-
         try {
+            if (request == null || request.getMagnetLink() == null
+                    || request.getMagnetLink().trim().isEmpty()) {
+                throw new InvalidMagnetLinkException("Magnet link or torrent file is required");
+            }
+
             String magnetLink = request.getMagnetLink().trim();
+            log.info("Adding torrent from request: {}", magnetLink);
 
             // Validate input
             boolean isMagnet = magnetLink.startsWith("magnet:?");
@@ -496,11 +501,12 @@ public class TorrentService {
         try {
             // Get current status
             com.frostwire.jlibtorrent.TorrentStatus status = handle.status();
+            torrent_flags_t flags = status.flags();
             log.info("Current status - State: {}, Flags: {}",
-                    status.state(), status.flags().to_int());
+                    status.state(), flags.to_int());
 
             // Check if already paused
-            boolean isPaused = status.flags().and_(TorrentFlags.PAUSED).nonZero();
+            boolean isPaused = flags.and_(TorrentFlags.PAUSED).nonZero();
             log.info("Is currently paused: {}", isPaused);
 
             if (isPaused) {
@@ -510,7 +516,7 @@ public class TorrentService {
 
             // CRITICAL: Remove AUTO_MANAGED flag first
             // AUTO_MANAGED flag causes jlibtorrent to ignore pause commands
-            boolean isAutoManaged = status.flags().and_(TorrentFlags.AUTO_MANAGED).nonZero();
+            boolean isAutoManaged = flags.and_(TorrentFlags.AUTO_MANAGED).nonZero();
             log.info("Is AUTO_MANAGED: {}", isAutoManaged);
 
             if (isAutoManaged) {
@@ -528,9 +534,10 @@ public class TorrentService {
 
             // Verify pause worked
             status = handle.status();
-            isPaused = status.flags().and_(TorrentFlags.PAUSED).nonZero();
+            flags = status.flags();
+            isPaused = flags.and_(TorrentFlags.PAUSED).nonZero();
             log.info("After pause() - Is paused: {}, State: {}, Flags: {}",
-                    isPaused, status.state(), status.flags().to_int());
+                    isPaused, status.state(), flags.to_int());
 
             if (!isPaused) {
                 log.warn("Pause command executed but torrent is still not paused! This may be a jlibtorrent issue.");

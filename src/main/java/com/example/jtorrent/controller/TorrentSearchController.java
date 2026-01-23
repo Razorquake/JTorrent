@@ -226,47 +226,56 @@ public class TorrentSearchController {
      * Build JPA Specification from filter request.
      */
     private Specification<Torrent> buildSpecification(TorrentFilterRequest filter) {
-        Specification<Torrent> spec = Specification.where((Specification<Torrent>) null);
+        Specification<Torrent> spec = null;
 
         // Status filter
         if (filter.getStatus() != null) {
-            spec = spec.and(TorrentSpecification.hasStatus(filter.getStatus()));
+            spec = combine(spec, TorrentSpecification.hasStatus(filter.getStatus()));
         }
 
         // Multiple statuses
         if (filter.getStatuses() != null && !filter.getStatuses().isEmpty()) {
-            spec = spec.and(TorrentSpecification.hasStatusIn(filter.getStatuses()));
+            spec = combine(spec, TorrentSpecification.hasStatusIn(filter.getStatuses()));
         }
 
         // Name filter
         if (filter.getName() != null && !filter.getName().isEmpty()) {
-            spec = spec.and(TorrentSpecification.nameContains(filter.getName()));
+            spec = combine(spec, TorrentSpecification.nameContains(filter.getName()));
         }
 
         // Progress range
         if (filter.getMinProgress() != null || filter.getMaxProgress() != null) {
-            spec = spec.and(TorrentSpecification.progressBetween(
+            spec = combine(spec, TorrentSpecification.progressBetween(
                     filter.getMinProgress(), filter.getMaxProgress()));
         }
 
         // Date range
         if (filter.getStartDate() != null || filter.getEndDate() != null) {
-            spec = spec.and(TorrentSpecification.addedBetween(
+            spec = combine(spec, TorrentSpecification.addedBetween(
                     filter.getStartDate(), filter.getEndDate()));
         }
 
         // Size range
         if (filter.getMinSize() != null || filter.getMaxSize() != null) {
-            spec = spec.and(TorrentSpecification.sizeBetween(
+            spec = combine(spec, TorrentSpecification.sizeBetween(
                     filter.getMinSize(), filter.getMaxSize()));
         }
 
         // Has errors
         if (Boolean.TRUE.equals(filter.getHasErrors())) {
-            spec = spec.and(TorrentSpecification.hasErrors());
+            spec = combine(spec, TorrentSpecification.hasErrors());
         }
 
         return spec;
+    }
+
+    private Specification<Torrent> combine(
+            Specification<Torrent> current,
+            Specification<Torrent> next) {
+        if (next == null) {
+            return current;
+        }
+        return current == null ? next : current.and(next);
     }
 
     /**

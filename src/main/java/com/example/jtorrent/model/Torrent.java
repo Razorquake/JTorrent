@@ -71,7 +71,9 @@ public class Torrent {
 
     @PrePersist
     protected void onCreate() {
-        addedDate = LocalDateTime.now();
+        if (addedDate == null) {
+            addedDate = LocalDateTime.now();
+        }
         if (status == null) {
             status = TorrentStatus.PENDING;
         }

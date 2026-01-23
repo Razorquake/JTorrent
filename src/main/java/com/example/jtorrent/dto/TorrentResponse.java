@@ -47,11 +47,11 @@ public class TorrentResponse {
     }
 
     public String getFormattedDownloadSpeed() {
-        return formatBytes(Long.valueOf(downloadSpeed)) + "/s";
+        return formatBytes(downloadSpeed != null ? downloadSpeed.longValue() : 0L) + "/s";
     }
 
     public String getFormattedUploadSpeed() {
-        return formatBytes(uploadedSize) + "/s";
+        return formatBytes(uploadSpeed != null ? uploadSpeed.longValue() : 0L) + "/s";
     }
 
     private String formatBytes(Long bytes) {

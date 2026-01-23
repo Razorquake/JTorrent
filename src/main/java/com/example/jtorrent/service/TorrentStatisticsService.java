@@ -86,6 +86,25 @@ public class TorrentStatisticsService {
                         return newStats;
                     });
 
+            if (stats.getTimeActive() == null) {
+                stats.setTimeActive(0L);
+            }
+            if (stats.getAverageDownloadSpeed() == null) {
+                stats.setAverageDownloadSpeed(0);
+            }
+            if (stats.getAverageUploadSpeed() == null) {
+                stats.setAverageUploadSpeed(0);
+            }
+            if (stats.getMaxDownloadSpeed() == null) {
+                stats.setMaxDownloadSpeed(0);
+            }
+            if (stats.getMaxUploadSpeed() == null) {
+                stats.setMaxUploadSpeed(0);
+            }
+            if (stats.getTotalPeers() == null) {
+                stats.setTotalPeers(0);
+            }
+
             // Update cumulative data
             stats.setTotalDownloaded(status.totalDownload());
             stats.setTotalUploaded(status.totalUpload());

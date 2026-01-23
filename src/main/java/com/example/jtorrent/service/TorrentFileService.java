@@ -61,15 +61,15 @@ public class TorrentFileService {
                 .orElseThrow(() -> new TorrentNotFoundException(torrentId));
 
         try {
-            TorrentHandle handle = sessionManager.findTorrent(torrent.getInfoHash());
-            if (handle == null) {
-                throw new TorrentNotActiveException(torrentId);
-            }
-
-            // Validate priority value
+            // Validate priority value before touching the session
             int priority = request.getPriority();
             if (priority < 0 || priority > 7) {
                 throw new IllegalArgumentException("Priority must be between 0 and 7");
+            }
+
+            TorrentHandle handle = sessionManager.findTorrent(torrent.getInfoHash());
+            if (handle == null) {
+                throw new TorrentNotActiveException(torrentId);
             }
 
             // Get current priorities for all files
