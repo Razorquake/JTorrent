@@ -692,6 +692,190 @@ class TorrentServiceTest {
         assertThat(torrent.getStatus()).isEqualTo(TorrentStatus.PENDING);
     }
 
+    // ── getTorrentByHash ──────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("Should return torrent response for a valid info hash")
+    void testGetTorrentByHash_Success() {
+        // Given
+        when(torrentRepository.findByInfoHash("test-info-hash-12345"))
+                .thenReturn(Optional.of(testTorrent));
+        when(torrentMapper.toResponse(testTorrent)).thenReturn(testTorrentResponse);
+
+        // When
+        TorrentResponse result = torrentService.getTorrentByHash("test-info-hash-12345");
+
+        // Then
+        assertThat(result).isNotNull();
+        assertThat(result.getId()).isEqualTo(1L);
+        verify(torrentRepository).findByInfoHash("test-info-hash-12345");
+    }
+
+    @Test
+    @DisplayName("Should normalise hash to lower-case before lookup")
+    void testGetTorrentByHash_NormalisesCase() {
+        // Given
+        when(torrentRepository.findByInfoHash("test-info-hash-12345"))
+                .thenReturn(Optional.of(testTorrent));
+        when(torrentMapper.toResponse(testTorrent)).thenReturn(testTorrentResponse);
+
+        // When – pass upper-case hash
+        TorrentResponse result = torrentService.getTorrentByHash("TEST-INFO-HASH-12345");
+
+        // Then – repository was called with the lower-cased value
+        assertThat(result).isNotNull();
+        verify(torrentRepository).findByInfoHash("test-info-hash-12345");
+    }
+
+    @Test
+    @DisplayName("Should throw TorrentNotFoundException for unknown hash")
+    void testGetTorrentByHash_NotFound() {
+        // Given
+        when(torrentRepository.findByInfoHash("unknown-hash")).thenReturn(Optional.empty());
+
+        // When/Then
+        assertThatThrownBy(() -> torrentService.getTorrentByHash("unknown-hash"))
+                .isInstanceOf(TorrentNotFoundException.class)
+                .hasMessageContaining("unknown-hash");
+    }
+
+    @Test
+    @DisplayName("Should throw InvalidMagnetLinkException for blank hash")
+    void testGetTorrentByHash_BlankHash() {
+        assertThatThrownBy(() -> torrentService.getTorrentByHash("  "))
+                .isInstanceOf(InvalidMagnetLinkException.class);
+
+        assertThatThrownBy(() -> torrentService.getTorrentByHash(null))
+                .isInstanceOf(InvalidMagnetLinkException.class);
+
+        verifyNoInteractions(torrentRepository);
+    }
+
+    // ── recheckTorrent ────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("Should initiate recheck and set status to CHECKING")
+    void testRecheckTorrent_Success() {
+        // Given
+        TorrentHandle mockHandle = mock(TorrentHandle.class);
+        when(torrentRepository.findById(1L)).thenReturn(Optional.of(testTorrent));
+        when(sessionManager.findTorrent("test-info-hash-12345")).thenReturn(mockHandle);
+        when(mockHandle.isValid()).thenReturn(true);
+        when(torrentRepository.save(any(Torrent.class))).thenReturn(testTorrent);
+
+        // When
+        MessageResponse response = torrentService.recheckTorrent(1L);
+
+        // Then
+        assertThat(response.getMessage()).contains("recheck");
+        verify(mockHandle).forceRecheck();
+        verify(torrentRepository).save(argThat(t -> t.getStatus() == TorrentStatus.CHECKING));
+    }
+
+    @Test
+    @DisplayName("Should throw TorrentNotFoundException when recheck targets unknown id")
+    void testRecheckTorrent_NotFound() {
+        when(torrentRepository.findById(99L)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> torrentService.recheckTorrent(99L))
+                .isInstanceOf(TorrentNotFoundException.class);
+
+        verifyNoInteractions(sessionManager);
+    }
+
+    @Test
+    @DisplayName("Should throw TorrentNotActiveException when handle is null for recheck")
+    void testRecheckTorrent_NoHandle() {
+        when(torrentRepository.findById(1L)).thenReturn(Optional.of(testTorrent));
+        when(sessionManager.findTorrent("test-info-hash-12345")).thenReturn(null);
+
+        assertThatThrownBy(() -> torrentService.recheckTorrent(1L))
+                .isInstanceOf(TorrentNotActiveException.class);
+    }
+
+    @Test
+    @DisplayName("Should throw TorrentNotActiveException when handle is invalid for recheck")
+    void testRecheckTorrent_InvalidHandle() {
+        TorrentHandle mockHandle = mock(TorrentHandle.class);
+        when(torrentRepository.findById(1L)).thenReturn(Optional.of(testTorrent));
+        when(sessionManager.findTorrent("test-info-hash-12345")).thenReturn(mockHandle);
+        when(mockHandle.isValid()).thenReturn(false);
+
+        assertThatThrownBy(() -> torrentService.recheckTorrent(1L))
+                .isInstanceOf(TorrentNotActiveException.class);
+    }
+
+    @Test
+    @DisplayName("Should wrap engine exceptions in TorrentFileException during recheck")
+    void testRecheckTorrent_EngineError() {
+        TorrentHandle mockHandle = mock(TorrentHandle.class);
+        when(torrentRepository.findById(1L)).thenReturn(Optional.of(testTorrent));
+        when(sessionManager.findTorrent("test-info-hash-12345")).thenReturn(mockHandle);
+        when(mockHandle.isValid()).thenReturn(true);
+        doThrow(new RuntimeException("native crash")).when(mockHandle).forceRecheck();
+
+        assertThatThrownBy(() -> torrentService.recheckTorrent(1L))
+                .isInstanceOf(TorrentFileException.class)
+                .hasMessageContaining("recheck");
+    }
+
+    // ── reannounceTorrent ─────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("Should send re-announce to all trackers")
+    void testReannounceTorrent_Success() {
+        // Given
+        TorrentHandle mockHandle = mock(TorrentHandle.class);
+        when(torrentRepository.findById(1L)).thenReturn(Optional.of(testTorrent));
+        when(sessionManager.findTorrent("test-info-hash-12345")).thenReturn(mockHandle);
+        when(mockHandle.isValid()).thenReturn(true);
+
+        // When
+        MessageResponse response = torrentService.reannounceTorrent(1L);
+
+        // Then
+        assertThat(response.getMessage()).contains("tracker");
+        verify(mockHandle).forceReannounce();
+        // No DB write expected for reannounce
+        verify(torrentRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("Should throw TorrentNotFoundException when reannounce targets unknown id")
+    void testReannounceTorrent_NotFound() {
+        when(torrentRepository.findById(99L)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> torrentService.reannounceTorrent(99L))
+                .isInstanceOf(TorrentNotFoundException.class);
+
+        verifyNoInteractions(sessionManager);
+    }
+
+    @Test
+    @DisplayName("Should throw TorrentNotActiveException when handle is null for reannounce")
+    void testReannounceTorrent_NoHandle() {
+        when(torrentRepository.findById(1L)).thenReturn(Optional.of(testTorrent));
+        when(sessionManager.findTorrent("test-info-hash-12345")).thenReturn(null);
+
+        assertThatThrownBy(() -> torrentService.reannounceTorrent(1L))
+                .isInstanceOf(TorrentNotActiveException.class);
+    }
+
+    @Test
+    @DisplayName("Should wrap engine exceptions in TorrentFileException during reannounce")
+    void testReannounceTorrent_EngineError() {
+        TorrentHandle mockHandle = mock(TorrentHandle.class);
+        when(torrentRepository.findById(1L)).thenReturn(Optional.of(testTorrent));
+        when(sessionManager.findTorrent("test-info-hash-12345")).thenReturn(mockHandle);
+        when(mockHandle.isValid()).thenReturn(true);
+        doThrow(new RuntimeException("tracker unreachable")).when(mockHandle).forceReannounce();
+
+        assertThatThrownBy(() -> torrentService.reannounceTorrent(1L))
+                .isInstanceOf(TorrentFileException.class)
+                .hasMessageContaining("re-announce");
+    }
+
+
     private void invokeUpdateStatus(Torrent torrent, com.frostwire.jlibtorrent.TorrentStatus status) {
         try {
             Method method = TorrentService.class.getDeclaredMethod(

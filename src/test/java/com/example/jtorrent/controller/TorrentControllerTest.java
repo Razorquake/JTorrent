@@ -268,4 +268,127 @@ public class TorrentControllerTest {
 
         verify(torrentService, times(1)).removeTorrent(1L, false);
     }
+
+    // ── GET /api/torrents/hash/{infoHash} ─────────────────────────────────────
+
+    @Test
+    @DisplayName("GET /api/torrents/hash/{infoHash} - Should return 200 with torrent data")
+    void testGetTorrentByHash_Success() throws Exception {
+        // Given
+        TorrentResponse torrent = TorrentResponse.builder()
+                .id(1L)
+                .infoHash("abc123def456")
+                .name("Test Torrent")
+                .status(TorrentStatus.DOWNLOADING)
+                .progress(42.0)
+                .build();
+
+        when(torrentService.getTorrentByHash("abc123def456")).thenReturn(torrent);
+
+        // When/Then
+        mockMvc.perform(get("/api/torrents/hash/abc123def456"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id", is(1)))
+                .andExpect(jsonPath("$.infoHash", is("abc123def456")))
+                .andExpect(jsonPath("$.name", is("Test Torrent")))
+                .andExpect(jsonPath("$.status", is("DOWNLOADING")));
+
+        verify(torrentService).getTorrentByHash("abc123def456");
+    }
+
+    @Test
+    @DisplayName("GET /api/torrents/hash/{infoHash} - Should return 404 for unknown hash")
+    void testGetTorrentByHash_NotFound() throws Exception {
+        // Given
+        when(torrentService.getTorrentByHash("unknown"))
+                .thenThrow(new TorrentExceptions.TorrentNotFoundException("unknown"));
+
+        // When/Then
+        mockMvc.perform(get("/api/torrents/hash/unknown"))
+                .andExpect(status().isNotFound());
+
+        verify(torrentService).getTorrentByHash("unknown");
+    }
+
+    // ── POST /api/torrents/{id}/recheck ───────────────────────────────────────
+
+    @Test
+    @DisplayName("POST /api/torrents/{id}/recheck - Should return 200 with confirmation")
+    void testRecheckTorrent_Success() throws Exception {
+        // Given
+        when(torrentService.recheckTorrent(1L))
+                .thenReturn(new MessageResponse("Torrent recheck started for: Test Torrent"));
+
+        // When/Then
+        mockMvc.perform(post("/api/torrents/1/recheck"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.message", notNullValue()));
+
+        verify(torrentService).recheckTorrent(1L);
+    }
+
+    @Test
+    @DisplayName("POST /api/torrents/{id}/recheck - Should return 404 for unknown torrent")
+    void testRecheckTorrent_NotFound() throws Exception {
+        // Given
+        when(torrentService.recheckTorrent(99L))
+                .thenThrow(new TorrentExceptions.TorrentNotFoundException(99L));
+
+        // When/Then
+        mockMvc.perform(post("/api/torrents/99/recheck"))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    @DisplayName("POST /api/torrents/{id}/recheck - Should return 400 for inactive torrent")
+    void testRecheckTorrent_NotActive() throws Exception {
+        // Given
+        when(torrentService.recheckTorrent(1L))
+                .thenThrow(new TorrentExceptions.TorrentNotActiveException(1L));
+
+        // When/Then
+        mockMvc.perform(post("/api/torrents/1/recheck"))
+                .andExpect(status().isBadRequest());
+    }
+
+    // ── POST /api/torrents/{id}/reannounce ────────────────────────────────────
+
+    @Test
+    @DisplayName("POST /api/torrents/{id}/reannounce - Should return 200 with confirmation")
+    void testReannounceTorrent_Success() throws Exception {
+        // Given
+        when(torrentService.reannounceTorrent(1L))
+                .thenReturn(new MessageResponse("Re-announce sent to all trackers for: Test Torrent"));
+
+        // When/Then
+        mockMvc.perform(post("/api/torrents/1/reannounce"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.message", notNullValue()));
+
+        verify(torrentService).reannounceTorrent(1L);
+    }
+
+    @Test
+    @DisplayName("POST /api/torrents/{id}/reannounce - Should return 404 for unknown torrent")
+    void testReannounceTorrent_NotFound() throws Exception {
+        // Given
+        when(torrentService.reannounceTorrent(99L))
+                .thenThrow(new TorrentExceptions.TorrentNotFoundException(99L));
+
+        // When/Then
+        mockMvc.perform(post("/api/torrents/99/reannounce"))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    @DisplayName("POST /api/torrents/{id}/reannounce - Should return 400 for inactive torrent")
+    void testReannounceTorrent_NotActive() throws Exception {
+        // Given
+        when(torrentService.reannounceTorrent(1L))
+                .thenThrow(new TorrentExceptions.TorrentNotActiveException(1L));
+
+        // When/Then
+        mockMvc.perform(post("/api/torrents/1/reannounce"))
+                .andExpect(status().isBadRequest());
+    }
 }

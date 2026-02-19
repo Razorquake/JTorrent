@@ -135,19 +135,18 @@ public class TorrentController {
     /**
      * Get torrent by info hash.
      *
-     * @param infoHash torrent info hash
+     * @param infoHash torrent info hash (hex, case-insensitive)
      * @return torrent details
      */
     @GetMapping("/hash/{infoHash}")
-    @Operation(summary = "Get torrent by hash", description = "Find torrent by its info hash")
+    @Operation(summary = "Get torrent by hash", description = "Find torrent by its SHA-1 info hash")
     public ResponseEntity<TorrentResponse> getTorrentByHash(
-            @Parameter(description = "Torrent info hash") @PathVariable String infoHash) {
+            @Parameter(description = "Torrent info hash (hex)") @PathVariable String infoHash) {
 
         log.debug("REST: Getting torrent by hash: {}", infoHash);
 
-        // This would need a new method in TorrentService
-        // For now, return 501 Not Implemented
-        return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED).build();
+        TorrentResponse torrent = torrentService.getTorrentByHash(infoHash);
+        return ResponseEntity.ok(torrent);
     }
 
     /**
@@ -157,14 +156,17 @@ public class TorrentController {
      * @return success message
      */
     @PostMapping("/{id}/recheck")
-    @Operation(summary = "Recheck torrent", description = "Force recheck of all downloaded pieces")
+    @Operation(
+            summary = "Recheck torrent",
+            description = "Force a full hash-check of all downloaded pieces. "
+                    + "Useful after corruption or an interrupted download.")
     public ResponseEntity<MessageResponse> recheckTorrent(
             @Parameter(description = "Torrent ID") @PathVariable Long id) {
 
         log.info("REST: Rechecking torrent {}", id);
 
-        // This would need implementation in TorrentService
-        return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED).build();
+        MessageResponse response = torrentService.recheckTorrent(id);
+        return ResponseEntity.ok(response);
     }
 
     /**
@@ -174,13 +176,16 @@ public class TorrentController {
      * @return success message
      */
     @PostMapping("/{id}/reannounce")
-    @Operation(summary = "Reannounce torrent", description = "Force reannounce to all trackers")
+    @Operation(
+            summary = "Reannounce torrent",
+            description = "Force an immediate announce to all trackers, bypassing the normal interval. "
+                    + "Useful when a download stalls or after a network change.")
     public ResponseEntity<MessageResponse> reannounceTorrent(
             @Parameter(description = "Torrent ID") @PathVariable Long id) {
 
         log.info("REST: Reannouncing torrent {}", id);
 
-        // This would need implementation in TorrentService
-        return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED).build();
+        MessageResponse response = torrentService.reannounceTorrent(id);
+        return ResponseEntity.ok(response);
     }
 }

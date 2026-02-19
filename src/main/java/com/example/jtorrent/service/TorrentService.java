@@ -598,4 +598,108 @@ public class TorrentService {
         webSocketService.notifyTorrentRemoved(id);
         return new MessageResponse("Torrent removed successfully");
     }
+
+    /**
+     * Find a torrent by its info hash.
+     *
+     * @param infoHash the torrent's SHA-1 info hash (hex string)
+     * @return torrent response DTO
+     * @throws TorrentNotFoundException if no torrent with that hash exists
+     */
+    @Transactional(readOnly = true)
+    public TorrentResponse getTorrentByHash(String infoHash) {
+        if (infoHash == null || infoHash.isBlank()) {
+            throw new InvalidMagnetLinkException("Info hash must not be blank");
+        }
+
+        Torrent torrent = torrentRepository.findByInfoHash(infoHash.toLowerCase().trim())
+                .orElseThrow(() -> new TorrentNotFoundException(infoHash));
+
+        updateTorrentFromHandle(torrent);
+
+        return torrentMapper.toResponse(torrent);
+    }
+
+    /**
+     * Force a hash-check of all downloaded pieces for a torrent.
+     *
+     * <p>This is useful after an interrupted download or suspected corruption.
+     * The torrent is automatically set to CHECKING status in the database and
+     * jlibtorrent will update it to DOWNLOADING / SEEDING / COMPLETED once the
+     * check finishes.
+     *
+     * @param id torrent ID
+     * @return confirmation message
+     * @throws TorrentNotFoundException  if the torrent does not exist in the DB
+     * @throws TorrentNotActiveException if the torrent has no live session handle
+     */
+    @Transactional
+    public MessageResponse recheckTorrent(Long id) {
+        Torrent torrent = torrentRepository.findById(id)
+                .orElseThrow(() -> new TorrentNotFoundException(id));
+
+        TorrentHandle handle = sessionManager.findTorrent(torrent.getInfoHash());
+        if (handle == null || !handle.isValid()) {
+            throw new TorrentNotActiveException(id);
+        }
+
+        try {
+            log.info("Starting force-recheck for torrent: {} ({})", torrent.getName(), id);
+
+            // forceRecheck() triggers a full piece-hash verification in libtorrent.
+            // The torrent is automatically paused first, then resumes checking.
+            handle.forceRecheck();
+
+            // Reflect the checking state immediately in the DB so the UI shows
+            // the correct status before the next scheduled status-poll fires.
+            torrent.setStatus(TorrentStatus.CHECKING);
+            torrent.setErrorMessage(null);
+            torrentRepository.save(torrent);
+
+            log.info("Force-recheck initiated for torrent: {} ({})", torrent.getName(), id);
+            return new MessageResponse("Torrent recheck started for: " + torrent.getName());
+
+        } catch (Exception e) {
+            log.error("Error initiating recheck for torrent {}: {}", id, e.getMessage(), e);
+            throw new TorrentFileException("Failed to start recheck: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Force a re-announcement to all trackers for a torrent.
+     *
+     * <p>This asks every tracker the torrent knows about to immediately report
+     * back a new peer list, bypassing the normal announcement interval. Useful when
+     * a download stalls or after a network change.
+     *
+     * @param id torrent ID
+     * @return confirmation message
+     * @throws TorrentNotFoundException  if the torrent does not exist in the DB
+     * @throws TorrentNotActiveException if the torrent has no live session handle
+     */
+    @Transactional(readOnly = true)
+    public MessageResponse reannounceTorrent(Long id) {
+        Torrent torrent = torrentRepository.findById(id)
+                .orElseThrow(() -> new TorrentNotFoundException(id));
+
+        TorrentHandle handle = sessionManager.findTorrent(torrent.getInfoHash());
+        if (handle == null || !handle.isValid()) {
+            throw new TorrentNotActiveException(id);
+        }
+
+        try {
+            log.info("Force-reannouncing torrent: {} ({})", torrent.getName(), id);
+
+            // forceReannounce() contacts all trackers in the torrent's tracker list
+            // immediately, regardless of the normal tracker announce interval.
+            handle.forceReannounce();
+
+            log.info("Force-reannounce sent for torrent: {} ({})", torrent.getName(), id);
+            return new MessageResponse("Re-announce sent to all trackers for: " + torrent.getName());
+
+        } catch (Exception e) {
+            log.error("Error re-announcing torrent {}: {}", id, e.getMessage(), e);
+            throw new TorrentFileException("Failed to re-announce: " + e.getMessage(), e);
+        }
+    }
 }
