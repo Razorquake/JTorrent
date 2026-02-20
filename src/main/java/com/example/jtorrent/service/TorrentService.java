@@ -38,6 +38,7 @@ public class TorrentService {
     private final DownloadStatisticsRepository downloadStatisticsRepository;
     private final TorrentSessionManager sessionManager;
     private final TorrentRepository torrentRepository;
+    private final FileManagementService fileManagementService;
     private final TorrentFileRepository torrentFileRepository;
     private final TorrentMapper torrentMapper;
     private final TorrentWebSocketService webSocketService;
@@ -568,7 +569,17 @@ public class TorrentService {
     }
 
     /**
-     * Remove a torrent.
+     * Remove a torrent and optionally delete its downloaded files.
+     *
+     * <p>Deletion strategy (when {@code deleteFiles=true}):
+     * <ol>
+     *   <li>If the torrent handle is still alive in the session, delegate to
+     *       jlibtorrent's {@code SessionHandle.DELETE_FILES} — this is the fast,
+     *       native path.</li>
+     *   <li>If the handle is gone (torrent was already stopped or the session was
+     *       restarted), fall back to {@link FileManagementService#deleteTorrentFiles}
+     *       which performs a Java-side directory walk.</li>
+     * </ol>
      */
     @Transactional
     public MessageResponse removeTorrent(Long id, boolean deleteFiles) {
@@ -583,6 +594,11 @@ public class TorrentService {
             } else {
                 sessionManager.getSession().remove(handle);
             }
+        } else if (deleteFiles) {
+            // ── Fallback: handle is gone, delete files via Java NIO ────────────
+            log.info("Handle not found for torrent {}; using Java-side file deletion", id);
+            int filesDeleted = fileManagementService.deleteTorrentFiles(torrent);
+            log.info("Java-side deletion removed {} file(s) for torrent {}", filesDeleted, id);
         }
 
         // Delete download statistics first (foreign key constraint)
