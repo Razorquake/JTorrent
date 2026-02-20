@@ -4,6 +4,7 @@ import com.example.jtorrent.dto.AddTorrentFileResponse;
 import com.example.jtorrent.dto.AddTorrentRequest;
 import com.example.jtorrent.dto.MessageResponse;
 import com.example.jtorrent.dto.TorrentResponse;
+import com.example.jtorrent.service.TorrentFileUploadService;
 import com.example.jtorrent.service.TorrentService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -12,8 +13,10 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
 
@@ -29,6 +32,7 @@ import java.util.List;
 public class TorrentController {
 
     private final TorrentService torrentService;
+    private final TorrentFileUploadService uploadService;
 
     /**
      * Add a new torrent from magnet link or .torrent file.
@@ -188,4 +192,49 @@ public class TorrentController {
         MessageResponse response = torrentService.reannounceTorrent(id);
         return ResponseEntity.ok(response);
     }
+
+    /**
+     * Upload a {@code .torrent} file and start managing it.
+     *
+     * <p>This endpoint accepts {@code multipart/form-data} with the following parts:
+     * <ul>
+     *   <li>{@code file}             – the {@code .torrent} file (required)</li>
+     *   <li>{@code savePath}         – optional custom download directory</li>
+     *   <li>{@code startImmediately} – {@code true} (default) to begin downloading right away</li>
+     * </ul>
+     *
+     * Example curl:
+     * <pre>
+     *   curl -X POST <a href="http://localhost:8080/api/torrents/upload">...</a> \
+     *     -F "file=@ubuntu-24.04.torrent" \
+     *     -F "startImmediately=true"
+     * </pre>
+     *
+     * @param file             the uploaded {@code .torrent} file
+     * @param savePath         optional save directory (defaults to the configured downloads path)
+     * @param startImmediately whether to start downloading immediately (default {@code true})
+     * @return torrent information
+     */
+    @PostMapping(value = "/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @Operation(
+            summary = "Upload .torrent file",
+            description = "Add a torrent by uploading a .torrent file (multipart/form-data). "
+                    + "Use the 'file' part for the torrent file, optional 'savePath' and 'startImmediately' params.")
+    public ResponseEntity<AddTorrentFileResponse> uploadTorrentFile(
+            @Parameter(description = "The .torrent file to upload", required = true)
+            @RequestParam(value = "file") MultipartFile file,
+
+            @Parameter(description = "Custom save directory (optional)")
+            @RequestParam(value = "savePath", required = false) String savePath,
+
+            @Parameter(description = "Start downloading immediately (default: true)")
+            @RequestParam(value = "startImmediately", defaultValue = "true") boolean startImmediately) {
+
+        log.info("REST: Received .torrent upload: name='{}', size={} bytes",
+                file.getOriginalFilename(), file.getSize());
+
+        AddTorrentFileResponse response = uploadService.addTorrentFromFile(file, savePath, startImmediately);
+        return ResponseEntity.status(HttpStatus.CREATED).body(response);
+    }
+
 }

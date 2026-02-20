@@ -1,17 +1,20 @@
 package com.example.jtorrent.controller;
 
+import com.example.jtorrent.dto.AddTorrentFileResponse;
 import com.example.jtorrent.dto.AddTorrentRequest;
 import com.example.jtorrent.dto.MessageResponse;
 import com.example.jtorrent.dto.TorrentResponse;
 import com.example.jtorrent.exception.TorrentExceptions;
 import com.example.jtorrent.model.TorrentStatus;
 import com.example.jtorrent.security.SecurityConfig;
+import com.example.jtorrent.service.TorrentFileUploadService;
 import com.example.jtorrent.service.TorrentService;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.http.MediaType;
+import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.web.servlet.MockMvc;
@@ -40,6 +43,9 @@ public class TorrentControllerTest {
 
     @MockitoBean
     private TorrentService torrentService;
+
+    @MockitoBean
+    private TorrentFileUploadService uploadService;
 
     @Test
     @DisplayName("POST /api/torrents - Should add torrent successfully")
@@ -390,5 +396,118 @@ public class TorrentControllerTest {
         // When/Then
         mockMvc.perform(post("/api/torrents/1/reannounce"))
                 .andExpect(status().isBadRequest());
+    }
+
+    // ── POST /api/torrents/upload ─────────────────────────────────────────────
+
+    @Test
+    @DisplayName("POST /api/torrents/upload - Should accept valid .torrent and return 201")
+    void testUploadTorrentFile_Success() throws Exception {
+        // Given
+        MockMultipartFile torrentFile = new MockMultipartFile(
+                "file",
+                "ubuntu.torrent",
+                "application/x-bittorrent",
+                new byte[]{0x64, 0x65} // minimal non-empty content (real parsing is service-level)
+        );
+
+        AddTorrentFileResponse serviceResponse = AddTorrentFileResponse.builder()
+                .torrentId(5L)
+                .infoHash("deadbeef")
+                .name("ubuntu-24.04-desktop-amd64")
+                .totalSize(3_000_000_000L)
+                .fileCount(1)
+                .message("Torrent uploaded and added successfully")
+                .started(true)
+                .build();
+
+        when(uploadService.addTorrentFromFile(any(), isNull(), eq(true)))
+                .thenReturn(serviceResponse);
+
+        // When/Then
+        mockMvc.perform(multipart("/api/torrents/upload")
+                        .file(torrentFile)
+                        .param("startImmediately", "true"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.torrentId", is(5)))
+                .andExpect(jsonPath("$.infoHash", is("deadbeef")))
+                .andExpect(jsonPath("$.name", is("ubuntu-24.04-desktop-amd64")))
+                .andExpect(jsonPath("$.fileCount", is(1)))
+                .andExpect(jsonPath("$.started", is(true)));
+
+        verify(uploadService).addTorrentFromFile(any(), isNull(), eq(true));
+    }
+
+    @Test
+    @DisplayName("POST /api/torrents/upload - Should pass savePath and startImmediately=false to service")
+    void testUploadTorrentFile_WithOptions() throws Exception {
+        // Given
+        MockMultipartFile torrentFile = new MockMultipartFile(
+                "file", "linux.torrent", "application/x-bittorrent", new byte[]{1, 2, 3});
+
+        AddTorrentFileResponse serviceResponse = AddTorrentFileResponse.builder()
+                .torrentId(6L)
+                .infoHash("cafe1234")
+                .name("linux-mint")
+                .totalSize(2_000_000_000L)
+                .fileCount(1)
+                .message("Torrent uploaded and added successfully")
+                .started(false)
+                .build();
+
+        when(uploadService.addTorrentFromFile(any(), eq("/custom/path"), eq(false)))
+                .thenReturn(serviceResponse);
+
+        // When/Then
+        mockMvc.perform(multipart("/api/torrents/upload")
+                        .file(torrentFile)
+                        .param("savePath", "/custom/path")
+                        .param("startImmediately", "false"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.started", is(false)));
+
+        verify(uploadService).addTorrentFromFile(any(), eq("/custom/path"), eq(false));
+    }
+
+    @Test
+    @DisplayName("POST /api/torrents/upload - Should return 400 when service rejects invalid file")
+    void testUploadTorrentFile_InvalidFile() throws Exception {
+        // Given
+        MockMultipartFile torrentFile = new MockMultipartFile(
+                "file", "bad.torrent", "application/x-bittorrent", new byte[]{1});
+
+        when(uploadService.addTorrentFromFile(any(), any(), anyBoolean()))
+                .thenThrow(new TorrentExceptions.InvalidMagnetLinkException("Not valid bencode"));
+
+        // When/Then
+        mockMvc.perform(multipart("/api/torrents/upload")
+                        .file(torrentFile))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("POST /api/torrents/upload - Should return 409 for duplicate torrent")
+    void testUploadTorrentFile_Duplicate() throws Exception {
+        // Given
+        MockMultipartFile torrentFile = new MockMultipartFile(
+                "file", "dup.torrent", "application/x-bittorrent", new byte[]{1, 2, 3});
+
+        when(uploadService.addTorrentFromFile(any(), any(), anyBoolean()))
+                .thenThrow(new TorrentExceptions.TorrentAlreadyExistsException("deadbeef"));
+
+        // When/Then
+        mockMvc.perform(multipart("/api/torrents/upload")
+                        .file(torrentFile))
+                .andExpect(status().isConflict());
+    }
+
+    @Test
+    @DisplayName("POST /api/torrents/upload - Should return 400 when no file part is supplied")
+    void testUploadTorrentFile_MissingFilePart() throws Exception {
+        // When/Then – no "file" part at all → Spring returns 400 automatically
+        mockMvc.perform(multipart("/api/torrents/upload"))
+                .andExpect(status().isBadRequest());
+
+        verifyNoInteractions(uploadService);
     }
 }
