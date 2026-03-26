@@ -31,11 +31,22 @@ public class HelpOverlay {
                 row(text("  r").bold(),        text("        Resume selected torrent").dim()),
                 row(text("  d").bold(),        text("        Delete selected torrent").dim()),
                 row(text("  c").bold(),        text("        Force piece recheck").dim()),
+                row(text("  t").bold(),        text("        Reannounce selected torrent").dim()),
                 spacer(),
                 // ── Search ────────────────────────────────────────────────
                 text(" Search").bold().cyan(),
                 row(text("  /").bold(),        text("        Open filter bar").dim()),
                 row(text("  Esc").bold(),      text("      Close filter / cancel dialog").dim()),
+                spacer(),
+                // ── Detail View ───────────────────────────────────────────
+                text(" Detail View").bold().cyan(),
+                row(text("  Tab").bold(),      text("      Switch detail tabs").dim()),
+                row(text("  Shift+Tab").bold(), text("  Previous detail tab").dim()),
+                row(text("  j / k").bold(),    text("    Move file selection (Files tab)").dim()),
+                row(text("  s / u").bold(),    text("    Skip or unskip selected file").dim()),
+                row(text("  h / l").bold(),    text("    Set selected file high/low priority").dim()),
+                row(text("  n").bold(),        text("        Reset selected file to normal priority").dim()),
+                row(text("  R").bold(),        text("        Reset all file priorities").dim()),
                 spacer(),
                 // ── General ───────────────────────────────────────────────
                 text(" General").bold().cyan(),

@@ -104,7 +104,8 @@ public class PollingService {
         try {
             boolean torrentsOk = pollTorrents();
             boolean statsOk = pollStats();
-            if (torrentsOk && statsOk) {
+            boolean detailOk = pollDetailIfOpen();
+            if (torrentsOk && statsOk && detailOk) {
                 controller.clearStatus();
             }
         } catch (Exception e) {
@@ -136,6 +137,76 @@ public class PollingService {
         } catch (ApiException e) {
             handleApiError("stats", e);
             return false;
+        }
+    }
+
+    private boolean pollDetailIfOpen() {
+        if (controller.activeView() != AppController.View.DETAIL) {
+            return true;
+        }
+
+        Long torrentId = controller.detailTorrentId();
+        if (torrentId == null) {
+            return true;
+        }
+
+        try {
+            controller.beginDetailRefresh();
+
+            TorrentApiClient.TorrentResponse detail = client.getTorrent(torrentId);
+            if (detail == null) {
+                controller.setDetailError("Torrent no longer exists on the server.");
+                return false;
+            }
+
+            TorrentApiClient.TorrentDetailStatsResponse detailStats = fetchOptionalStats(torrentId);
+            TorrentApiClient.TorrentEtaResponse eta = fetchOptionalEta(torrentId);
+            Double ratio = fetchOptionalRatio(torrentId);
+
+            controller.setDetailData(detail, detailStats, eta, ratio);
+            return true;
+        } catch (ApiException e) {
+            if (e.isConnectionRefused()) {
+                controller.setDisconnected();
+                controller.setDetailError("Cannot refresh detail while the server is offline.");
+            } else {
+                controller.setDetailError("Failed to refresh detail: HTTP " + e.getStatusCode());
+            }
+            log.debug("Error polling detail for torrent {}: {}", torrentId, e.getMessage());
+            return false;
+        }
+    }
+
+    private TorrentApiClient.TorrentDetailStatsResponse fetchOptionalStats(long torrentId) throws ApiException {
+        try {
+            return client.getTorrentStats(torrentId);
+        } catch (ApiException e) {
+            if (e.getStatusCode() == 404) {
+                return null;
+            }
+            throw e;
+        }
+    }
+
+    private TorrentApiClient.TorrentEtaResponse fetchOptionalEta(long torrentId) throws ApiException {
+        try {
+            return client.getTorrentEta(torrentId);
+        } catch (ApiException e) {
+            if (e.getStatusCode() == 404) {
+                return null;
+            }
+            throw e;
+        }
+    }
+
+    private Double fetchOptionalRatio(long torrentId) throws ApiException {
+        try {
+            return client.getTorrentRatio(torrentId);
+        } catch (ApiException e) {
+            if (e.getStatusCode() == 404) {
+                return null;
+            }
+            throw e;
         }
     }
 

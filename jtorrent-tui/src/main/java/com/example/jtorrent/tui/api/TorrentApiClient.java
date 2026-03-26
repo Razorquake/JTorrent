@@ -8,6 +8,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -19,6 +20,7 @@ import java.time.LocalDateTime;
 import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 /**
  * Typed HTTP client that wraps all JTorrent REST API endpoints.
@@ -34,12 +36,22 @@ import java.util.UUID;
  * <ul>
  *   <li>GET  /api/torrents              — list all torrents</li>
  *   <li>GET  /api/torrents/{id}         — single torrent</li>
+ *   <li>GET  /api/stats/torrent/{id}    — per-torrent statistics</li>
+ *   <li>GET  /api/stats/torrent/{id}/ratio — share ratio</li>
+ *   <li>GET  /api/stats/torrent/{id}/eta   — estimated time remaining</li>
  *   <li>POST /api/torrents              — add via magnet link</li>
  *   <li>POST /api/torrents/upload       — add via .torrent file</li>
  *   <li>POST /api/torrents/{id}/start   — resume a torrent</li>
  *   <li>POST /api/torrents/{id}/pause   — pause a torrent</li>
  *   <li>DELETE /api/torrents/{id}       — remove a torrent</li>
  *   <li>POST /api/torrents/{id}/recheck — force piece recheck</li>
+ *   <li>POST /api/torrents/{id}/reannounce — force tracker reannounce</li>
+ *   <li>PUT  /api/torrents/{id}/files/priorities — set file priority</li>
+ *   <li>POST /api/torrents/{id}/files/skip — skip selected files</li>
+ *   <li>POST /api/torrents/{id}/files/download — resume selected files</li>
+ *   <li>POST /api/torrents/{id}/files/prioritize — set selected files high priority</li>
+ *   <li>POST /api/torrents/{id}/files/deprioritize — set selected files low priority</li>
+ *   <li>POST /api/torrents/{id}/files/reset-priorities — reset all file priorities</li>
  *   <li>GET  /api/stats/overall         — global statistics</li>
  * </ul>
  */
@@ -167,8 +179,8 @@ public class TorrentApiClient {
                 + crlf;
         String footer = crlf + separator + "--" + crlf;
 
-        byte[] headerBytes = header.getBytes();
-        byte[] footerBytes = footer.getBytes();
+        byte[] headerBytes = header.getBytes(StandardCharsets.UTF_8);
+        byte[] footerBytes = footer.getBytes(StandardCharsets.UTF_8);
         byte[] body = new byte[headerBytes.length + fileBytes.length + footerBytes.length];
         System.arraycopy(headerBytes, 0, body, 0, headerBytes.length);
         System.arraycopy(fileBytes, 0, body, headerBytes.length, fileBytes.length);
@@ -239,6 +251,119 @@ public class TorrentApiClient {
         post("/api/torrents/" + id + "/recheck", "");
     }
 
+    /**
+     * Forces an immediate tracker announce for the torrent.
+     *
+     * @param id torrent database ID
+     * @throws ApiException on server or network error
+     */
+    public void reannounceTorrent(long id) throws ApiException {
+        post("/api/torrents/" + id + "/reannounce", "");
+    }
+
+    /**
+     * Sets a specific priority for the selected files in a torrent.
+     *
+     * @param torrentId torrent database ID
+     * @param fileIds   selected file IDs
+     * @param priority  file priority (0=skip, 1=low, 4=normal, 7=high)
+     * @throws ApiException on server or network error
+     */
+    public void updateFilePriorities(long torrentId, List<Long> fileIds, int priority) throws ApiException {
+        put("/api/torrents/" + torrentId + "/files/priorities", priorityBody(fileIds, priority));
+    }
+
+    /**
+     * Marks the selected files as skipped.
+     */
+    public void skipFiles(long torrentId, List<Long> fileIds) throws ApiException {
+        post("/api/torrents/" + torrentId + "/files/skip", fileIdsBody(fileIds));
+    }
+
+    /**
+     * Resumes downloading for previously skipped files.
+     */
+    public void downloadFiles(long torrentId, List<Long> fileIds) throws ApiException {
+        post("/api/torrents/" + torrentId + "/files/download", fileIdsBody(fileIds));
+    }
+
+    /**
+     * Marks the selected files as high priority.
+     */
+    public void prioritizeFiles(long torrentId, List<Long> fileIds) throws ApiException {
+        post("/api/torrents/" + torrentId + "/files/prioritize", fileIdsBody(fileIds));
+    }
+
+    /**
+     * Marks the selected files as low priority.
+     */
+    public void deprioritizeFiles(long torrentId, List<Long> fileIds) throws ApiException {
+        post("/api/torrents/" + torrentId + "/files/deprioritize", fileIdsBody(fileIds));
+    }
+
+    /**
+     * Resets all file priorities for the torrent back to normal.
+     */
+    public void resetFilePriorities(long torrentId) throws ApiException {
+        post("/api/torrents/" + torrentId + "/files/reset-priorities", "");
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Per-torrent detail / statistics
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Returns detailed statistics for a single torrent.
+     *
+     * @param torrentId torrent database ID
+     * @return stats DTO, or {@code null} if no stats record exists yet
+     * @throws ApiException on server or network error
+     */
+    public TorrentDetailStatsResponse getTorrentStats(long torrentId) throws ApiException {
+        try {
+            String json = get("/api/stats/torrent/" + torrentId);
+            return mapper.readValue(json, TorrentDetailStatsResponse.class);
+        } catch (ApiException e) {
+            if (e.getStatusCode() == 404) return null;
+            throw e;
+        } catch (IOException e) {
+            throw new ApiException("Failed to parse torrent stats: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Returns share-ratio information for a single torrent.
+     *
+     * @param torrentId torrent database ID
+     * @return ratio value, or {@code null} if unavailable
+     * @throws ApiException on server or network error
+     */
+    public Double getTorrentRatio(long torrentId) throws ApiException {
+        String json = get("/api/stats/torrent/" + torrentId + "/ratio");
+        try {
+            RatioResponse response = mapper.readValue(json, RatioResponse.class);
+            return response.ratio;
+        } catch (IOException e) {
+            throw new ApiException("Failed to parse torrent ratio: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Returns ETA information for a single torrent.
+     *
+     * @param torrentId torrent database ID
+     * @return ETA DTO, or {@code null} if the server has no estimate
+     * @throws ApiException on server or network error
+     */
+    public TorrentEtaResponse getTorrentEta(long torrentId) throws ApiException {
+        String json = get("/api/stats/torrent/" + torrentId + "/eta");
+        try {
+            return mapper.readValue(json, TorrentEtaResponse.class);
+        } catch (IOException e) {
+            throw new ApiException("Failed to parse torrent ETA: " + e.getMessage(), e);
+        }
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // Statistics
     // ─────────────────────────────────────────────────────────────────────────
@@ -283,6 +408,17 @@ public class TorrentApiClient {
         return execute(request);
     }
 
+    private String put(String path, String jsonBody) throws ApiException {
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(baseUrl + path))
+                .timeout(Duration.ofSeconds(10))
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json")
+                .PUT(HttpRequest.BodyPublishers.ofString(jsonBody))
+                .build();
+        return execute(request);
+    }
+
     private String execute(HttpRequest request) throws ApiException {
         try {
             HttpResponse<String> response =
@@ -317,6 +453,27 @@ public class TorrentApiClient {
                 .replace("\r", "\\r");
     }
 
+    private static String fileIdsBody(List<Long> fileIds) {
+        String ids = safeFileIds(fileIds).stream()
+                .map(String::valueOf)
+                .collect(Collectors.joining(","));
+        return "{\"fileIds\":[" + ids + "]}";
+    }
+
+    private static String priorityBody(List<Long> fileIds, int priority) {
+        String ids = safeFileIds(fileIds).stream()
+                .map(String::valueOf)
+                .collect(Collectors.joining(","));
+        return "{\"fileIds\":[" + ids + "],\"priority\":" + priority + "}";
+    }
+
+    private static List<Long> safeFileIds(List<Long> fileIds) {
+        if (fileIds == null) {
+            throw new IllegalArgumentException("fileIds must not be null");
+        }
+        return fileIds.stream().filter(id -> id != null).toList();
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // Response DTOs  (mirrors server-side DTOs — no shared code dependency)
     // ─────────────────────────────────────────────────────────────────────────
@@ -347,7 +504,11 @@ public class TorrentApiClient {
         public String savePath;
         public LocalDateTime addedDate;
         public LocalDateTime completedDate;
+        public List<TorrentFileResponse> files;
         public String errorMessage;
+        public String comment;
+        public String createdBy;
+        public LocalDateTime creationDate;
 
         // ── Formatting helpers used by the TUI widgets ──────────────────────
 
@@ -359,12 +520,24 @@ public class TorrentApiClient {
             return formatBytes(downloadedSize);
         }
 
+        public String formattedUploaded() {
+            return formatBytes(uploadedSize);
+        }
+
         public String formattedDownloadSpeed() {
-            return formatBytes(downloadSpeed != null ? downloadSpeed.longValue() : 0L) + "/s";
+            return formatSpeed(downloadSpeed != null ? downloadSpeed.longValue() : 0L);
         }
 
         public String formattedUploadSpeed() {
-            return formatBytes(uploadSpeed != null ? uploadSpeed.longValue() : 0L) + "/s";
+            return formatSpeed(uploadSpeed != null ? uploadSpeed.longValue() : 0L);
+        }
+
+        public int fileCount() {
+            return files != null ? files.size() : 0;
+        }
+
+        public List<TorrentFileResponse> safeFiles() {
+            return files == null ? List.of() : List.copyOf(files);
         }
 
         /** Returns a short one-word status label suitable for a table cell. */
@@ -384,17 +557,56 @@ public class TorrentApiClient {
         }
 
         private static String formatBytes(Long bytes) {
-            if (bytes == null || bytes <= 0) return "0 B";
-            String[] units = {"B", "KB", "MB", "GB", "TB"};
-            int idx = (int) (Math.log10(bytes) / Math.log10(1024));
-            idx = Math.min(idx, units.length - 1);
-            double val = bytes / Math.pow(1024, idx);
-            return String.format("%.1f %s", val, units[idx]);
+            return TorrentApiClient.formatBytes(bytes);
         }
 
         @Override
         public String toString() {
             return "TorrentResponse{id=" + id + ", name='" + name + "', status=" + status + "}";
+        }
+    }
+
+    /**
+     * Mirror of the server's {@code TorrentFileResponse}.
+     */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class TorrentFileResponse {
+        public Long id;
+        public String path;
+        public Long size;
+        public Long downloadedSize;
+        public Double progress;
+        public Integer priority;
+
+        public String displayName() {
+            return path != null && !path.isBlank() ? path : "(unnamed file)";
+        }
+
+        public String formattedSize() {
+            return formatBytes(size);
+        }
+
+        public String formattedDownloaded() {
+            return formatBytes(downloadedSize);
+        }
+
+        public String progressLabel() {
+            double pct = progress != null ? progress : 0.0;
+            return String.format("%5.1f%%", pct);
+        }
+
+        public String priorityLabel() {
+            return switch (priority != null ? priority : 4) {
+                case 0 -> "SKIP";
+                case 1 -> "LOW";
+                case 4 -> "NORM";
+                case 7 -> "HIGH";
+                default -> "P" + priority;
+            };
+        }
+
+        public boolean isSkipped() {
+            return priority != null && priority == 0;
         }
     }
 
@@ -425,12 +637,79 @@ public class TorrentApiClient {
         public String formattedUploadSpeed() {
             return formatSpeed(currentUploadSpeed);
         }
+    }
 
-        private static String formatSpeed(int bytesPerSec) {
-            if (bytesPerSec <= 0) return "0 B/s";
-            if (bytesPerSec < 1_024) return bytesPerSec + " B/s";
-            if (bytesPerSec < 1_048_576) return String.format("%.1f KB/s", bytesPerSec / 1_024.0);
-            return String.format("%.1f MB/s", bytesPerSec / 1_048_576.0);
+    /**
+     * Mirror of the server's {@code DownloadStatistics} payload.
+     * Unknown fields like the nested torrent object are intentionally ignored.
+     */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class TorrentDetailStatsResponse {
+        public Long totalDownloaded;
+        public Long totalUploaded;
+        public Double ratio;
+        public Long timeActive;
+        public LocalDateTime startTime;
+        public LocalDateTime endTime;
+        public Integer averageDownloadSpeed;
+        public Integer averageUploadSpeed;
+        public Integer maxDownloadSpeed;
+        public Integer maxUploadSpeed;
+        public Integer totalPeers;
+
+        public String formattedTotalDownloaded() {
+            return formatBytes(totalDownloaded);
+        }
+
+        public String formattedTotalUploaded() {
+            return formatBytes(totalUploaded);
+        }
+
+        public String formattedAverageDownloadSpeed() {
+            return formatSpeed(averageDownloadSpeed != null ? averageDownloadSpeed.longValue() : 0L);
+        }
+
+        public String formattedAverageUploadSpeed() {
+            return formatSpeed(averageUploadSpeed != null ? averageUploadSpeed.longValue() : 0L);
+        }
+
+        public String formattedMaxDownloadSpeed() {
+            return formatSpeed(maxDownloadSpeed != null ? maxDownloadSpeed.longValue() : 0L);
+        }
+
+        public String formattedMaxUploadSpeed() {
+            return formatSpeed(maxUploadSpeed != null ? maxUploadSpeed.longValue() : 0L);
+        }
+
+        public String formattedTimeActive() {
+            return formatDuration(timeActive);
+        }
+    }
+
+    /**
+     * Small wrapper used by the ratio endpoint.
+     */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class RatioResponse {
+        public Double ratio;
+    }
+
+    /**
+     * Mirror of the server's ETA response map.
+     */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class TorrentEtaResponse {
+        public Long etaSeconds;
+        public String etaFormatted;
+
+        public String displayValue() {
+            if (etaFormatted != null && !etaFormatted.isBlank()) {
+                return etaFormatted;
+            }
+            if (etaSeconds == null) {
+                return "Unknown";
+            }
+            return formatDuration(etaSeconds);
         }
     }
 
@@ -469,5 +748,37 @@ public class TorrentApiClient {
         public boolean isConnectionRefused() {
             return statusCode == -1;
         }
+    }
+
+    private static String formatBytes(Long bytes) {
+        long safeBytes = bytes != null ? bytes : 0L;
+        if (safeBytes <= 0) return "0 B";
+        String[] units = {"B", "KB", "MB", "GB", "TB"};
+        int idx = (int) (Math.log10(safeBytes) / Math.log10(1024));
+        idx = Math.min(idx, units.length - 1);
+        double val = safeBytes / Math.pow(1024, idx);
+        return String.format("%.1f %s", val, units[idx]);
+    }
+
+    private static String formatSpeed(long bytesPerSec) {
+        return formatBytes(bytesPerSec) + "/s";
+    }
+
+    private static String formatDuration(Long seconds) {
+        if (seconds == null || seconds < 0) {
+            return "Unknown";
+        }
+        long totalSeconds = seconds;
+        long days = totalSeconds / 86_400;
+        long hours = (totalSeconds % 86_400) / 3_600;
+        long minutes = (totalSeconds % 3_600) / 60;
+        long secs = totalSeconds % 60;
+
+        StringBuilder sb = new StringBuilder();
+        if (days > 0) sb.append(days).append("d ");
+        if (hours > 0) sb.append(hours).append("h ");
+        if (minutes > 0) sb.append(minutes).append("m ");
+        if (secs > 0 || sb.isEmpty()) sb.append(secs).append("s");
+        return sb.toString().trim();
     }
 }

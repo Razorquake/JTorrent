@@ -20,6 +20,7 @@ import java.awt.datatransfer.UnsupportedFlavorException;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.List;
 
 import static dev.tamboui.toolkit.Toolkit.*;
 
@@ -203,7 +204,11 @@ public class JTorrentApp extends ToolkitApp {
         if (event.isChar('G') || event.code() == KeyCode.END)  { controller.moveBottom(); return EventResult.HANDLED; }
 
         // Open overlays
-        if (event.isSelect())   { controller.openDetail();           return EventResult.HANDLED; }
+        if (event.isSelect())   {
+            controller.openDetail();
+            requestDetailRefresh();
+            return EventResult.HANDLED;
+        }
         if (event.isChar('a'))  {
             addDialog.clearInput();
             controller.openAddDialog();
@@ -225,10 +230,31 @@ public class JTorrentApp extends ToolkitApp {
 
     private EventResult handleDetailKey(dev.tamboui.tui.event.KeyEvent event) {
         if (event.isCancel())   { controller.closeDetail();          return EventResult.HANDLED; }
-        if (event.isChar('p'))  { asyncPause();   controller.closeDetail(); return EventResult.HANDLED; }
-        if (event.isChar('r'))  { asyncResume();  controller.closeDetail(); return EventResult.HANDLED; }
+        if (isFocusNext(event) || event.code() == KeyCode.RIGHT) {
+            controller.nextDetailTab();
+            return EventResult.HANDLED;
+        }
+        if (event.isFocusPrevious() || event.code() == KeyCode.LEFT) {
+            controller.previousDetailTab();
+            return EventResult.HANDLED;
+        }
+
+        if (controller.detailTab() == AppController.DetailTab.FILES) {
+            if (event.isDown() || event.isChar('j')) { controller.moveFileDown(); return EventResult.HANDLED; }
+            if (event.isUp() || event.isChar('k'))   { controller.moveFileUp();   return EventResult.HANDLED; }
+            if (event.isChar('s')) { asyncSkipSelectedFile();        return EventResult.HANDLED; }
+            if (event.isChar('u')) { asyncDownloadSelectedFile();    return EventResult.HANDLED; }
+            if (event.isChar('h')) { asyncPrioritizeSelectedFile();  return EventResult.HANDLED; }
+            if (event.isChar('l')) { asyncDeprioritizeSelectedFile(); return EventResult.HANDLED; }
+            if (event.isChar('n')) { asyncSetSelectedFilePriority(4, "Priority set to normal"); return EventResult.HANDLED; }
+            if (event.isChar('R')) { asyncResetAllFilePriorities();  return EventResult.HANDLED; }
+        }
+
+        if (event.isChar('p'))  { asyncPause();   return EventResult.HANDLED; }
+        if (event.isChar('r'))  { asyncResume();  return EventResult.HANDLED; }
         if (event.isChar('d'))  { controller.openConfirmDelete();    return EventResult.HANDLED; }
-        if (event.isChar('c'))  { asyncRecheck(); controller.closeDetail(); return EventResult.HANDLED; }
+        if (event.isChar('c'))  { asyncRecheck(); return EventResult.HANDLED; }
+        if (event.isChar('t'))  { asyncReannounce(); return EventResult.HANDLED; }
         return EventResult.UNHANDLED;
     }
 
@@ -350,45 +376,19 @@ public class JTorrentApp extends ToolkitApp {
     }
 
     private void asyncPause() {
-        var t = controller.selectedTorrent();
-        if (t == null || t.id == null) return;
-        long id = t.id;
-        Thread.ofVirtual().start(() -> {
-            try {
-                client.pauseTorrent(id);
-                runOnRender(() -> controller.setStatus("Paused"));
-            } catch (TorrentApiClient.ApiException e) {
-                runOnRender(() -> controller.setError("Pause failed: " + e.getMessage()));
-            }
-        });
+        asyncTorrentAction("Paused", "Pause failed", client::pauseTorrent);
     }
 
     private void asyncResume() {
-        var t = controller.selectedTorrent();
-        if (t == null || t.id == null) return;
-        long id = t.id;
-        Thread.ofVirtual().start(() -> {
-            try {
-                client.startTorrent(id);
-                runOnRender(() -> controller.setStatus("Resumed"));
-            } catch (TorrentApiClient.ApiException e) {
-                runOnRender(() -> controller.setError("Resume failed: " + e.getMessage()));
-            }
-        });
+        asyncTorrentAction("Resumed", "Resume failed", client::startTorrent);
     }
 
     private void asyncRecheck() {
-        var t = controller.selectedTorrent();
-        if (t == null || t.id == null) return;
-        long id = t.id;
-        Thread.ofVirtual().start(() -> {
-            try {
-                client.recheckTorrent(id);
-                runOnRender(() -> controller.setStatus("Recheck started"));
-            } catch (TorrentApiClient.ApiException e) {
-                runOnRender(() -> controller.setError("Recheck failed: " + e.getMessage()));
-            }
-        });
+        asyncTorrentAction("Recheck started", "Recheck failed", client::recheckTorrent);
+    }
+
+    private void asyncReannounce() {
+        asyncTorrentAction("Reannounce requested", "Reannounce failed", client::reannounceTorrent);
     }
 
     private void asyncDelete(boolean deleteFiles) {
@@ -404,6 +404,179 @@ public class JTorrentApp extends ToolkitApp {
                 runOnRender(() -> controller.setError("Delete failed: " + e.getMessage()));
             }
         });
+    }
+
+    private void asyncSkipSelectedFile() {
+        asyncSelectedFileAction(
+                "File skipped",
+                "Skip failed",
+                (torrentId, fileIds) -> client.skipFiles(torrentId, fileIds)
+        );
+    }
+
+    private void asyncDownloadSelectedFile() {
+        asyncSelectedFileAction(
+                "File resumed",
+                "Resume file failed",
+                (torrentId, fileIds) -> client.downloadFiles(torrentId, fileIds)
+        );
+    }
+
+    private void asyncPrioritizeSelectedFile() {
+        asyncSelectedFileAction(
+                "File set to high priority",
+                "Prioritize failed",
+                (torrentId, fileIds) -> client.prioritizeFiles(torrentId, fileIds)
+        );
+    }
+
+    private void asyncDeprioritizeSelectedFile() {
+        asyncSelectedFileAction(
+                "File set to low priority",
+                "Deprioritize failed",
+                (torrentId, fileIds) -> client.deprioritizeFiles(torrentId, fileIds)
+        );
+    }
+
+    private void asyncSetSelectedFilePriority(int priority, String successMessage) {
+        asyncSelectedFileAction(
+                successMessage,
+                "Priority update failed",
+                (torrentId, fileIds) -> client.updateFilePriorities(torrentId, fileIds, priority)
+        );
+    }
+
+    private void asyncResetAllFilePriorities() {
+        Long torrentId = controller.detailTorrentId();
+        if (torrentId == null) return;
+
+        Thread.ofVirtual().start(() -> {
+            try {
+                client.resetFilePriorities(torrentId);
+                runOnRender(() -> controller.setStatus("All file priorities reset"));
+                requestDetailRefresh(torrentId);
+            } catch (TorrentApiClient.ApiException e) {
+                runOnRender(() -> controller.setError("Reset priorities failed: " + e.getMessage()));
+            }
+        });
+    }
+
+    private void asyncTorrentAction(
+            String successMessage,
+            String failurePrefix,
+            TorrentAction action) {
+        Long torrentId = currentTorrentIdForAction();
+        if (torrentId == null) return;
+        boolean refreshDetail = torrentId.equals(controller.detailTorrentId());
+
+        Thread.ofVirtual().start(() -> {
+            try {
+                action.run(torrentId);
+                runOnRender(() -> controller.setStatus(successMessage));
+                if (refreshDetail) {
+                    requestDetailRefresh(torrentId);
+                }
+            } catch (TorrentApiClient.ApiException e) {
+                runOnRender(() -> controller.setError(failurePrefix + ": " + e.getMessage()));
+            }
+        });
+    }
+
+    private void asyncSelectedFileAction(
+            String successMessage,
+            String failurePrefix,
+            FileSelectionAction action) {
+        Long torrentId = controller.detailTorrentId();
+        var file = controller.selectedFile();
+        if (torrentId == null || file == null || file.id == null) return;
+
+        List<Long> fileIds = List.of(file.id);
+        Thread.ofVirtual().start(() -> {
+            try {
+                action.run(torrentId, fileIds);
+                runOnRender(() -> controller.setStatus(successMessage));
+                requestDetailRefresh(torrentId);
+            } catch (TorrentApiClient.ApiException e) {
+                runOnRender(() -> controller.setError(failurePrefix + ": " + e.getMessage()));
+            }
+        });
+    }
+
+    private void requestDetailRefresh() {
+        Long torrentId = controller.detailTorrentId();
+        if (torrentId != null) {
+            requestDetailRefresh(torrentId);
+        }
+    }
+
+    private void requestDetailRefresh(long torrentId) {
+        controller.beginDetailRefresh();
+        Thread.ofVirtual().start(() -> loadDetailSnapshot(torrentId));
+    }
+
+    private void loadDetailSnapshot(long torrentId) {
+        try {
+            TorrentApiClient.TorrentResponse detail = client.getTorrent(torrentId);
+            if (detail == null) {
+                runOnRender(() -> controller.setDetailError("Torrent no longer exists on the server."));
+                return;
+            }
+
+            TorrentApiClient.TorrentDetailStatsResponse detailStats = loadOptionalDetailStats(torrentId);
+            TorrentApiClient.TorrentEtaResponse eta = loadOptionalDetailEta(torrentId);
+            Double ratio = loadOptionalDetailRatio(torrentId);
+
+            runOnRender(() -> controller.setDetailData(detail, detailStats, eta, ratio));
+        } catch (TorrentApiClient.ApiException e) {
+            String message = e.isConnectionRefused()
+                    ? "Cannot refresh detail while the server is offline."
+                    : "Failed to refresh detail: " + e.getMessage();
+            runOnRender(() -> controller.setDetailError(message));
+        }
+    }
+
+    private TorrentApiClient.TorrentDetailStatsResponse loadOptionalDetailStats(long torrentId)
+            throws TorrentApiClient.ApiException {
+        try {
+            return client.getTorrentStats(torrentId);
+        } catch (TorrentApiClient.ApiException e) {
+            if (e.getStatusCode() == 404) {
+                return null;
+            }
+            throw e;
+        }
+    }
+
+    private TorrentApiClient.TorrentEtaResponse loadOptionalDetailEta(long torrentId)
+            throws TorrentApiClient.ApiException {
+        try {
+            return client.getTorrentEta(torrentId);
+        } catch (TorrentApiClient.ApiException e) {
+            if (e.getStatusCode() == 404) {
+                return null;
+            }
+            throw e;
+        }
+    }
+
+    private Double loadOptionalDetailRatio(long torrentId) throws TorrentApiClient.ApiException {
+        try {
+            return client.getTorrentRatio(torrentId);
+        } catch (TorrentApiClient.ApiException e) {
+            if (e.getStatusCode() == 404) {
+                return null;
+            }
+            throw e;
+        }
+    }
+
+    private Long currentTorrentIdForAction() {
+        if (controller.activeView() == AppController.View.DETAIL) {
+            return controller.detailTorrentId();
+        }
+
+        var t = controller.selectedTorrent();
+        return t != null ? t.id : null;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -492,6 +665,16 @@ public class JTorrentApp extends ToolkitApp {
 
     private void pageUp() {
         for (int i = 0; i < 10; i++) controller.moveUp();
+    }
+
+    @FunctionalInterface
+    private interface TorrentAction {
+        void run(long torrentId) throws TorrentApiClient.ApiException;
+    }
+
+    @FunctionalInterface
+    private interface FileSelectionAction {
+        void run(long torrentId, List<Long> fileIds) throws TorrentApiClient.ApiException;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
