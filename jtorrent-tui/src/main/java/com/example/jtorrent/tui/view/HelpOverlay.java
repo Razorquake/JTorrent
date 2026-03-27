@@ -22,6 +22,9 @@ public class HelpOverlay {
                 row(text("  k / ↑").bold(),   text("    Move selection up").dim()),
                 row(text("  g / Home").bold(), text("  Jump to first torrent").dim()),
                 row(text("  G / End").bold(),  text("   Jump to last torrent").dim()),
+                row(text("  1-5").bold(),      text("      Switch list scope (All/Active/Completed/Errors/Stalled)").dim()),
+                row(text("  s / S").bold(),    text("    Cycle sort field / toggle sort direction").dim()),
+                row(text("  , / .").bold(),    text("    Previous / next page").dim()),
                 spacer(),
                 // ── Actions ───────────────────────────────────────────────
                 text(" Actions").bold().cyan(),

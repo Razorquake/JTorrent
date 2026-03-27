@@ -71,6 +71,7 @@ public class TorrentListView {
 
         return panel(
                 buildTitle(),
+                buildScopeBar(),
                 buildTable(visible),
                 buildFilterBar(),
                 buildFooterHints()
@@ -85,14 +86,54 @@ public class TorrentListView {
     // ─────────────────────────────────────────────────────────────────────────
 
     private String buildTitle() {
-        List<TorrentResponse> visible = controller.visibleTorrents();
-        int total   = controller.torrents().size();
-        int showing = visible.size();
+        return "Torrents";
+    }
 
-        if (controller.isFilterMode() && showing < total) {
-            return "Torrents  [" + showing + " / " + total + " shown]";
+    private Element buildScopeBar() {
+        return row(
+                scopeTab(AppController.ListScope.ALL),
+                text(" "),
+                scopeTab(AppController.ListScope.ACTIVE),
+                text(" "),
+                scopeTab(AppController.ListScope.COMPLETED),
+                text(" "),
+                scopeTab(AppController.ListScope.ERRORS),
+                text(" "),
+                scopeTab(AppController.ListScope.STALLED),
+                text("  |  ").dim(),
+                text("Sort: ").dim(),
+                text(controller.listSort().label()).bold(),
+                text(controller.isSortAscending() ? " ↑" : " ↓").dim(),
+                text("  |  ").dim(),
+                text("Page ").dim(),
+                text((controller.page() + 1) + "/" + Math.max(controller.totalPages(), 1)).bold(),
+                text("  ").dim(),
+                text(controller.totalResults() + " results").dim(),
+                activeQueryLabel(),
+                spacer(),
+                controller.isListLoading()
+                        ? text("Refreshing...").dim()
+                        : text("")
+        );
+    }
+
+    private Element scopeTab(AppController.ListScope scope) {
+        boolean active = controller.listScope() == scope;
+        String label = active ? "[" + scope.label() + "]" : scope.label();
+        return active
+                ? text(label).cyan().bold()
+                : text(label).dim();
+    }
+
+    private Element activeQueryLabel() {
+        if (!controller.hasActiveQuery()) {
+            return text("");
         }
-        return "Torrents  [" + total + "]";
+        return row(
+                text("  |  ").dim(),
+                text("Query: ").dim(),
+                text("\"" + controller.filterText() + "\"").cyan()
+        );
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -129,8 +170,12 @@ public class TorrentListView {
                 .highlightColor(Color.CYAN)
                 .highlightSymbol("> ")
                 .columnSpacing(1)
-                .title(buildTitle())
+                .title(buildTableTitle())
                 .rounded();
+    }
+
+    private String buildTableTitle() {
+        return controller.listScope().label() + "  [" + controller.torrents().size() + " on page]";
     }
 
     /**
@@ -321,7 +366,8 @@ public class TorrentListView {
         }
 
         return text(
-                " [Enter] Details  [a] Add  [p] Pause  [r] Resume" +
+                " [1-5] Views  [s] Sort  [S] Dir  [,] Prev Pg  [.] Next Pg" +
+                        "  [Enter] Details  [a] Add  [p] Pause  [r] Resume" +
                         "  [d] Delete  [c] Recheck  [/] Search  [?] Help"
         ).dim();
     }
@@ -331,11 +377,22 @@ public class TorrentListView {
     // ─────────────────────────────────────────────────────────────────────────
 
     private Element renderEmptyState() {
-        if (controller.isFilterMode()) {
+        if (controller.hasActiveQuery()) {
             return column(
                     spacer(),
-                    text("  No torrents match \"" + controller.filterText() + "\"").dim().italic(),
-                    text("  Press [Esc] to clear the filter.").dim(),
+                    text("  No torrents match \"" + controller.filterText() + "\" in "
+                            + controller.listScope().label().toLowerCase() + ".").dim().italic(),
+                    text("  Press [/] to edit the query or [Esc] while editing to clear it.").dim(),
+                    spacer()
+            );
+        }
+
+        if (controller.listScope() != AppController.ListScope.ALL) {
+            return column(
+                    spacer(),
+                    text("  No torrents in the " + controller.listScope().label().toLowerCase() + " view.")
+                            .dim().italic(),
+                    text("  Press [1] for All torrents or [a] to add a new one.").dim(),
                     spacer()
             );
         }

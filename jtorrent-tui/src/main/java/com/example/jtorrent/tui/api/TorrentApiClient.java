@@ -35,6 +35,8 @@ import java.util.stream.Collectors;
  * <h2>Endpoints covered</h2>
  * <ul>
  *   <li>GET  /api/torrents              — list all torrents</li>
+ *   <li>POST /api/torrents/search       — paged/sorted torrent search</li>
+ *   <li>GET  /api/torrents/search/stalled — stalled torrents</li>
  *   <li>GET  /api/torrents/{id}         — single torrent</li>
  *   <li>GET  /api/stats/torrent/{id}    — per-torrent statistics</li>
  *   <li>GET  /api/stats/torrent/{id}/ratio — share ratio</li>
@@ -332,6 +334,38 @@ public class TorrentApiClient {
     }
 
     /**
+     * Executes the server-side torrent search endpoint.
+     *
+     * @param request search/filter/sort request
+     * @return paged search response
+     * @throws ApiException on server or network error
+     */
+    public TorrentPageResponse searchTorrents(TorrentSearchRequest request) throws ApiException {
+        String json = post("/api/torrents/search", writeJson(request));
+        try {
+            return mapper.readValue(json, TorrentPageResponse.class);
+        } catch (IOException e) {
+            throw new ApiException("Failed to parse search results: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Returns stalled torrents from the dedicated backend endpoint.
+     *
+     * @return stalled torrent list
+     * @throws ApiException on server or network error
+     */
+    public List<TorrentResponse> getStalledTorrents() throws ApiException {
+        String json = get("/api/torrents/search/stalled");
+        try {
+            TorrentResponse[] array = mapper.readValue(json, TorrentResponse[].class);
+            return Arrays.asList(array);
+        } catch (IOException e) {
+            throw new ApiException("Failed to parse stalled torrents: " + e.getMessage(), e);
+        }
+    }
+
+    /**
      * Returns share-ratio information for a single torrent.
      *
      * @param torrentId torrent database ID
@@ -474,6 +508,14 @@ public class TorrentApiClient {
         return fileIds.stream().filter(id -> id != null).toList();
     }
 
+    private String writeJson(Object value) throws ApiException {
+        try {
+            return mapper.writeValueAsString(value);
+        } catch (IOException e) {
+            throw new ApiException("Failed to encode JSON request: " + e.getMessage(), e);
+        }
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // Response DTOs  (mirrors server-side DTOs — no shared code dependency)
     // ─────────────────────────────────────────────────────────────────────────
@@ -563,6 +605,43 @@ public class TorrentApiClient {
         @Override
         public String toString() {
             return "TorrentResponse{id=" + id + ", name='" + name + "', status=" + status + "}";
+        }
+    }
+
+    /**
+     * Mirror of the server's {@code TorrentFilterRequest}.
+     */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class TorrentSearchRequest {
+        public String status;
+        public List<String> statuses;
+        public String name;
+        public Double minProgress;
+        public Double maxProgress;
+        public Boolean hasErrors;
+        public String sortBy = "addedDate";
+        public String sortDirection = "DESC";
+        public Integer page = 0;
+        public Integer size = 20;
+    }
+
+    /**
+     * Minimal mirror of Spring Data's paged response body.
+     */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class TorrentPageResponse {
+        public List<TorrentResponse> content;
+        public int totalPages;
+        public long totalElements;
+        public int number;
+        public int size;
+        public int numberOfElements;
+        public boolean first;
+        public boolean last;
+        public boolean empty;
+
+        public List<TorrentResponse> safeContent() {
+            return content == null ? List.of() : List.copyOf(content);
         }
     }
 

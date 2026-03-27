@@ -181,21 +181,40 @@ public class JTorrentApp extends ToolkitApp {
     private EventResult handleListKey(dev.tamboui.tui.event.KeyEvent event) {
         // Filter mode — capture all printable chars for the search bar
         if (controller.isFilterMode()) {
-            if (event.isCancel())  { controller.closeFilter();       return EventResult.HANDLED; }
-            if (event.isSelect())  { controller.closeFilter();       return EventResult.HANDLED; }
+            if (event.isCancel())  {
+                controller.clearFilter();
+                requestListRefresh();
+                return EventResult.HANDLED;
+            }
+            if (event.isSelect())  {
+                controller.applyFilter();
+                requestListRefresh();
+                return EventResult.HANDLED;
+            }
             if (isDeleteBackward(event)) {
                 controller.filterBackspace();
+                requestListRefresh();
                 return EventResult.HANDLED;
             }
             Character c = printableChar(event);
             if (c != null) {
                 controller.typeFilterChar(c);
+                requestListRefresh();
                 return EventResult.HANDLED;
             }
             return EventResult.UNHANDLED;
         }
 
         // Normal list navigation
+        if (event.isChar('1')) { controller.setListScope(AppController.ListScope.ALL);        requestListRefresh(); return EventResult.HANDLED; }
+        if (event.isChar('2')) { controller.setListScope(AppController.ListScope.ACTIVE);     requestListRefresh(); return EventResult.HANDLED; }
+        if (event.isChar('3')) { controller.setListScope(AppController.ListScope.COMPLETED);  requestListRefresh(); return EventResult.HANDLED; }
+        if (event.isChar('4')) { controller.setListScope(AppController.ListScope.ERRORS);     requestListRefresh(); return EventResult.HANDLED; }
+        if (event.isChar('5')) { controller.setListScope(AppController.ListScope.STALLED);    requestListRefresh(); return EventResult.HANDLED; }
+        if (event.isChar('s')) { controller.cycleListSort();                                   requestListRefresh(); return EventResult.HANDLED; }
+        if (event.isChar('S')) { controller.toggleSortDirection();                            requestListRefresh(); return EventResult.HANDLED; }
+        if (event.isChar(',')) { controller.previousPage();                                   requestListRefresh(); return EventResult.HANDLED; }
+        if (event.isChar('.')) { controller.nextPage();                                       requestListRefresh(); return EventResult.HANDLED; }
         if (event.isDown()  || event.isChar('j')) { controller.moveDown();           return EventResult.HANDLED; }
         if (event.isUp()    || event.isChar('k')) { controller.moveUp();             return EventResult.HANDLED; }
         if (event.isPageDown())                    { pageDown();                      return EventResult.HANDLED; }
@@ -507,6 +526,11 @@ public class JTorrentApp extends ToolkitApp {
         if (torrentId != null) {
             requestDetailRefresh(torrentId);
         }
+    }
+
+    private void requestListRefresh() {
+        controller.beginListRefresh();
+        poller.refreshNow();
     }
 
     private void requestDetailRefresh(long torrentId) {

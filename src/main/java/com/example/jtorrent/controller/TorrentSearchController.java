@@ -226,7 +226,7 @@ public class TorrentSearchController {
      * Build JPA Specification from filter request.
      */
     private Specification<Torrent> buildSpecification(TorrentFilterRequest filter) {
-        Specification<Torrent> spec = null;
+        Specification<Torrent> spec = matchAll();
 
         // Status filter
         if (filter.getStatus() != null) {
@@ -267,6 +267,10 @@ public class TorrentSearchController {
         }
 
         return spec;
+    }
+
+    private Specification<Torrent> matchAll() {
+        return (root, query, criteriaBuilder) -> criteriaBuilder.conjunction();
     }
 
     private Specification<Torrent> combine(

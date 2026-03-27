@@ -27,6 +27,7 @@ import java.util.List;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -125,6 +126,54 @@ class TorrentSearchControllerTest {
         ArgumentCaptor<Pageable> pageableCaptor = ArgumentCaptor.forClass(Pageable.class);
         verify(torrentRepository, times(1)).findAll(any(Specification.class), pageableCaptor.capture());
         Pageable pageable = pageableCaptor.getValue();
+        assertEquals(Sort.Direction.DESC, pageable.getSort().getOrderFor("addedDate").getDirection());
+    }
+
+    @Test
+    @DisplayName("POST /api/torrents/search - Should support empty filters")
+    void testSearchTorrents_EmptyFilters() throws Exception {
+        Torrent torrent = buildTorrent(10L, "Arch Linux", TorrentStatus.SEEDING);
+        TorrentResponse response = buildResponse(10L, "Arch Linux", TorrentStatus.SEEDING);
+        Page<Torrent> page = new PageImpl<>(List.of(torrent), PageRequest.of(0, 20), 1);
+
+        when(torrentRepository.findAll(any(Specification.class), any(Pageable.class))).thenReturn(page);
+        when(torrentMapper.toResponse(torrent)).thenReturn(response);
+
+        String payload = """
+                {
+                  "status": null,
+                  "statuses": null,
+                  "name": null,
+                  "minProgress": null,
+                  "maxProgress": null,
+                  "startDate": null,
+                  "endDate": null,
+                  "minSize": null,
+                  "maxSize": null,
+                  "hasErrors": null,
+                  "sortBy": "addedDate",
+                  "sortDirection": "DESC",
+                  "page": 0,
+                  "size": 20
+                }
+                """;
+
+        mockMvc.perform(post("/api/torrents/search")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(payload))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content", hasSize(1)))
+                .andExpect(jsonPath("$.content[0].id", is(10)));
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Specification<Torrent>> specCaptor = ArgumentCaptor.forClass((Class) Specification.class);
+        ArgumentCaptor<Pageable> pageableCaptor = ArgumentCaptor.forClass(Pageable.class);
+        verify(torrentRepository, times(1)).findAll(specCaptor.capture(), pageableCaptor.capture());
+
+        assertNotNull(specCaptor.getValue());
+        Pageable pageable = pageableCaptor.getValue();
+        assertEquals(0, pageable.getPageNumber());
+        assertEquals(20, pageable.getPageSize());
         assertEquals(Sort.Direction.DESC, pageable.getSort().getOrderFor("addedDate").getDirection());
     }
 

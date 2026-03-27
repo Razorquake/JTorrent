@@ -66,6 +66,53 @@ public class AppController {
         STATS
     }
 
+    /**
+     * Server-backed list scopes exposed in the TUI.
+     */
+    public enum ListScope {
+        ALL("All"),
+        ACTIVE("Active"),
+        COMPLETED("Completed"),
+        ERRORS("Errors"),
+        STALLED("Stalled");
+
+        private final String label;
+
+        ListScope(String label) {
+            this.label = label;
+        }
+
+        public String label() {
+            return label;
+        }
+    }
+
+    /**
+     * Sort fields supported by the server-backed search endpoint.
+     */
+    public enum ListSort {
+        ADDED("addedDate", "Added"),
+        NAME("name", "Name"),
+        PROGRESS("progress", "Progress"),
+        SIZE("totalSize", "Size");
+
+        private final String serverField;
+        private final String label;
+
+        ListSort(String serverField, String label) {
+            this.serverField = serverField;
+            this.label = label;
+        }
+
+        public String serverField() {
+            return serverField;
+        }
+
+        public String label() {
+            return label;
+        }
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // State fields  (all private, mutated only through commands)
     // ─────────────────────────────────────────────────────────────────────────
@@ -73,6 +120,15 @@ public class AppController {
     // --- Torrent list ---
     private List<TorrentApiClient.TorrentResponse> torrents = Collections.emptyList();
     private int selectedIndex = 0;
+    private Long selectedTorrentId = null;
+    private ListScope listScope = ListScope.ALL;
+    private ListSort listSort = ListSort.ADDED;
+    private boolean sortAscending = false;
+    private int page = 0;
+    private int totalPages = 1;
+    private long totalResults = 0;
+    private int pageSize = 20;
+    private boolean listLoading = false;
 
     // --- Global stats ---
     private TorrentApiClient.StatsResponse stats = new TorrentApiClient.StatsResponse();
@@ -119,13 +175,7 @@ public class AppController {
 
     /** Returns the visible torrents after applying the active name filter. */
     public synchronized List<TorrentApiClient.TorrentResponse> visibleTorrents() {
-        if (!filterMode || filterInput.isEmpty()) {
-            return List.copyOf(torrents);
-        }
-        String needle = filterInput.toString().toLowerCase();
-        return torrents.stream()
-                .filter(t -> t.name != null && t.name.toLowerCase().contains(needle))
-                .toList();
+        return List.copyOf(torrents);
     }
 
     /** Returns the currently selected torrent, or {@code null} if the list is empty. */
@@ -138,6 +188,61 @@ public class AppController {
     /** Zero-based index of the highlighted row in the visible list. */
     public synchronized int selectedIndex() {
         return selectedIndex;
+    }
+
+    /** Active list scope. */
+    public synchronized ListScope listScope() {
+        return listScope;
+    }
+
+    /** Active list sort field. */
+    public synchronized ListSort listSort() {
+        return listSort;
+    }
+
+    /** True when the list is sorted ascending. */
+    public synchronized boolean isSortAscending() {
+        return sortAscending;
+    }
+
+    /** Current page number (0-based). */
+    public synchronized int page() {
+        return page;
+    }
+
+    /** Total number of pages available for the current query. */
+    public synchronized int totalPages() {
+        return totalPages;
+    }
+
+    /** Total number of results available for the current query. */
+    public synchronized long totalResults() {
+        return totalResults;
+    }
+
+    /** Requested page size for the server-backed list. */
+    public synchronized int pageSize() {
+        return pageSize;
+    }
+
+    /** True while the list is waiting on a fresh server response. */
+    public synchronized boolean isListLoading() {
+        return listLoading;
+    }
+
+    /** True when there is another page after the current one. */
+    public synchronized boolean hasNextPage() {
+        return page + 1 < totalPages;
+    }
+
+    /** True when there is a page before the current one. */
+    public synchronized boolean hasPreviousPage() {
+        return page > 0;
+    }
+
+    /** True when a server-side name query is active. */
+    public synchronized boolean hasActiveQuery() {
+        return !filterInput.isEmpty();
     }
 
     /** Latest global statistics snapshot. Never {@code null}. */
@@ -253,24 +358,34 @@ public class AppController {
 
     /** Move the selection one row up. */
     public synchronized void moveUp() {
-        if (selectedIndex > 0) selectedIndex--;
+        if (selectedIndex > 0) {
+            selectedIndex--;
+            syncSelectedTorrentId();
+        }
     }
 
     /** Move the selection one row down. */
     public synchronized void moveDown() {
         List<TorrentApiClient.TorrentResponse> visible = visibleTorrents();
-        if (selectedIndex < visible.size() - 1) selectedIndex++;
+        if (selectedIndex < visible.size() - 1) {
+            selectedIndex++;
+            syncSelectedTorrentId();
+        }
     }
 
     /** Jump to the first row. */
     public synchronized void moveTop() {
         selectedIndex = 0;
+        syncSelectedTorrentId();
     }
 
     /** Jump to the last row. */
     public synchronized void moveBottom() {
         int size = visibleTorrents().size();
-        if (size > 0) selectedIndex = size - 1;
+        if (size > 0) {
+            selectedIndex = size - 1;
+            syncSelectedTorrentId();
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -404,31 +519,43 @@ public class AppController {
     /** Open the filter bar. */
     public synchronized void openFilter() {
         filterMode  = true;
-        filterInput.setLength(0);
-        selectedIndex = 0;
     }
 
     /** Append a character to the filter buffer. */
     public synchronized void typeFilterChar(char c) {
         filterInput.append(c);
-        selectedIndex = 0;   // reset selection whenever filter changes
+        page = 0;
+        selectedIndex = 0;
+        selectedTorrentId = null;
+        listLoading = true;
     }
 
     /** Delete the last filter character, or close the bar if it is already empty. */
     public synchronized void filterBackspace() {
         if (filterInput.length() > 0) {
             filterInput.setLength(filterInput.length() - 1);
+            page = 0;
             selectedIndex = 0;
+            selectedTorrentId = null;
+            listLoading = true;
         } else {
-            closeFilter();
+            clearFilter();
         }
     }
 
+    /** Stop editing the filter while keeping the current query active. */
+    public synchronized void applyFilter() {
+        filterMode  = false;
+    }
+
     /** Close and clear the filter bar. */
-    public synchronized void closeFilter() {
+    public synchronized void clearFilter() {
         filterMode  = false;
         filterInput.setLength(0);
+        page = 0;
         selectedIndex = 0;
+        selectedTorrentId = null;
+        listLoading = true;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -451,6 +578,94 @@ public class AppController {
     public synchronized void clearStatus() {
         statusMessage = null;
         statusIsError = false;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Commands — list query state
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /** Mark the server-backed list as loading. */
+    public synchronized void beginListRefresh() {
+        listLoading = true;
+    }
+
+    /** Clear the list-loading indicator without replacing the current rows. */
+    public synchronized void endListRefresh() {
+        listLoading = false;
+    }
+
+    /** Switch to a different list scope and reset paging. */
+    public synchronized void setListScope(ListScope scope) {
+        if (scope == null || scope == listScope) {
+            return;
+        }
+        listScope = scope;
+        page = 0;
+        selectedIndex = 0;
+        selectedTorrentId = null;
+        listLoading = true;
+    }
+
+    /** Cycle through supported server-side sort fields. */
+    public synchronized void cycleListSort() {
+        listSort = switch (listSort) {
+            case ADDED -> ListSort.NAME;
+            case NAME -> ListSort.PROGRESS;
+            case PROGRESS -> ListSort.SIZE;
+            case SIZE -> ListSort.ADDED;
+        };
+        page = 0;
+        listLoading = true;
+    }
+
+    /** Flip the current server-side sort direction. */
+    public synchronized void toggleSortDirection() {
+        sortAscending = !sortAscending;
+        page = 0;
+        listLoading = true;
+    }
+
+    /** Move to the next page if one exists. */
+    public synchronized void nextPage() {
+        if (page + 1 < totalPages) {
+            page++;
+            selectedIndex = 0;
+            selectedTorrentId = null;
+            listLoading = true;
+        }
+    }
+
+    /** Move to the previous page if one exists. */
+    public synchronized void previousPage() {
+        if (page > 0) {
+            page--;
+            selectedIndex = 0;
+            selectedTorrentId = null;
+            listLoading = true;
+        }
+    }
+
+    /**
+     * Build a server-side search request for the current list scope/query.
+     * The dedicated STALLED view is fetched through its own endpoint.
+     */
+    public synchronized TorrentApiClient.TorrentSearchRequest buildListSearchRequest() {
+        TorrentApiClient.TorrentSearchRequest request = new TorrentApiClient.TorrentSearchRequest();
+        request.name = filterInput.isEmpty() ? null : filterInput.toString();
+        request.sortBy = listSort.serverField();
+        request.sortDirection = sortAscending ? "ASC" : "DESC";
+        request.page = page;
+        request.size = pageSize;
+
+        switch (listScope) {
+            case ACTIVE -> request.statuses = List.of("DOWNLOADING", "SEEDING", "CHECKING");
+            case COMPLETED -> request.status = "COMPLETED";
+            case ERRORS -> request.hasErrors = true;
+            default -> {
+                // ALL uses the default request, STALLED is handled separately.
+            }
+        }
+        return request;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -510,17 +725,21 @@ public class AppController {
      * <p>The selection index is clamped so it never goes out of bounds after a
      * torrent is removed between polls.
      */
-    public synchronized void setTorrents(List<TorrentApiClient.TorrentResponse> freshList) {
+    public synchronized void setListData(
+            List<TorrentApiClient.TorrentResponse> freshList,
+            int page,
+            int totalPages,
+            long totalResults,
+            int pageSize) {
         this.torrents  = freshList == null ? Collections.emptyList() : freshList;
         this.connected = true;
+        this.listLoading = false;
+        this.page = Math.max(page, 0);
+        this.totalPages = Math.max(totalPages, 1);
+        this.totalResults = Math.max(totalResults, 0L);
+        this.pageSize = Math.max(pageSize, 1);
 
-        // Clamp selectedIndex to the new list size
-        int visible = visibleTorrents().size();
-        if (visible == 0) {
-            selectedIndex = 0;
-        } else if (selectedIndex >= visible) {
-            selectedIndex = visible - 1;
-        }
+        syncSelectionAfterListRefresh();
 
         // Keep the detail header in sync with the live list while the richer
         // detail snapshot is being refreshed in the background.
@@ -561,6 +780,7 @@ public class AppController {
      */
     public synchronized void setDisconnected() {
         this.connected = false;
+        this.listLoading = false;
     }
 
     private void clampSelectedFileIndex() {
@@ -570,5 +790,38 @@ public class AppController {
         } else if (selectedFileIndex >= size) {
             selectedFileIndex = size - 1;
         }
+    }
+
+    private void syncSelectedTorrentId() {
+        if (torrents.isEmpty() || selectedIndex >= torrents.size()) {
+            selectedTorrentId = null;
+            return;
+        }
+        selectedTorrentId = torrents.get(selectedIndex).id;
+    }
+
+    private void syncSelectionAfterListRefresh() {
+        if (torrents.isEmpty()) {
+            selectedIndex = 0;
+            selectedTorrentId = null;
+            return;
+        }
+
+        if (selectedTorrentId != null) {
+            for (int i = 0; i < torrents.size(); i++) {
+                if (selectedTorrentId.equals(torrents.get(i).id)) {
+                    selectedIndex = i;
+                    return;
+                }
+            }
+        }
+
+        if (selectedIndex >= torrents.size()) {
+            selectedIndex = torrents.size() - 1;
+        }
+        if (selectedIndex < 0) {
+            selectedIndex = 0;
+        }
+        syncSelectedTorrentId();
     }
 }

@@ -6,6 +6,8 @@ import com.example.jtorrent.tui.controller.AppController;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -91,6 +93,15 @@ public class PollingService {
         scheduler.shutdownNow();
     }
 
+    /**
+     * Queue an immediate refresh without waiting for the next scheduled tick.
+     */
+    public void refreshNow() {
+        if (!scheduler.isShutdown()) {
+            scheduler.execute(this::poll);
+        }
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // Poll logic
     // ─────────────────────────────────────────────────────────────────────────
@@ -119,9 +130,29 @@ public class PollingService {
 
     private boolean pollTorrents() {
         try {
-            List<TorrentApiClient.TorrentResponse> list = client.getAllTorrents();
-            controller.setTorrents(list);
-            log.debug("Polled {} torrents", list.size());
+            if (controller.listScope() == AppController.ListScope.STALLED) {
+                List<TorrentApiClient.TorrentResponse> list = loadStalledScopePage();
+                log.debug("Polled {} stalled torrents for current page", list.size());
+                return true;
+            }
+
+            TorrentApiClient.TorrentSearchRequest request = controller.buildListSearchRequest();
+            TorrentApiClient.TorrentPageResponse page = client.searchTorrents(request);
+
+            if (page.safeContent().isEmpty() && request.page != null && request.page > 0 && page.totalPages > 0) {
+                request.page = page.totalPages - 1;
+                page = client.searchTorrents(request);
+            }
+
+            controller.setListData(
+                    page.safeContent(),
+                    page.number,
+                    page.totalPages,
+                    page.totalElements,
+                    page.size > 0 ? page.size : controller.pageSize()
+            );
+            log.debug("Polled {} torrents (page {} of {})",
+                    page.safeContent().size(), page.number + 1, Math.max(page.totalPages, 1));
             return true;
         } catch (ApiException e) {
             handleApiError("torrent list", e);
@@ -210,11 +241,67 @@ public class PollingService {
         }
     }
 
+    private List<TorrentApiClient.TorrentResponse> loadStalledScopePage() throws ApiException {
+        List<TorrentApiClient.TorrentResponse> stalled = sortForCurrentScope(client.getStalledTorrents());
+        String query = controller.filterText().toLowerCase();
+        if (!query.isBlank()) {
+            stalled = stalled.stream()
+                    .filter(t -> t.name != null && t.name.toLowerCase().contains(query))
+                    .toList();
+        }
+
+        int pageSize = Math.max(controller.pageSize(), 1);
+        int total = stalled.size();
+        int totalPages = Math.max((int) Math.ceil(total / (double) pageSize), 1);
+        int safePage = Math.min(controller.page(), totalPages - 1);
+        int fromIndex = Math.min(safePage * pageSize, total);
+        int toIndex = Math.min(fromIndex + pageSize, total);
+
+        List<TorrentApiClient.TorrentResponse> pageSlice = stalled.subList(fromIndex, toIndex);
+        controller.setListData(pageSlice, safePage, totalPages, total, pageSize);
+        return pageSlice;
+    }
+
+    private List<TorrentApiClient.TorrentResponse> sortForCurrentScope(
+            List<TorrentApiClient.TorrentResponse> torrents) {
+        List<TorrentApiClient.TorrentResponse> sorted = new ArrayList<>(torrents);
+        Comparator<TorrentApiClient.TorrentResponse> comparator = switch (controller.listSort()) {
+            case NAME -> Comparator.comparing(t -> safeString(t.name), String.CASE_INSENSITIVE_ORDER);
+            case PROGRESS -> Comparator.comparing(t -> safeDouble(t.progress));
+            case SIZE -> Comparator.comparing(t -> safeLong(t.totalSize));
+            case ADDED -> Comparator.comparing(t -> safeDate(t.addedDate));
+        };
+
+        if (!controller.isSortAscending()) {
+            comparator = comparator.reversed();
+        }
+
+        sorted.sort(comparator);
+        return sorted;
+    }
+
+    private static String safeString(String value) {
+        return value != null ? value : "";
+    }
+
+    private static double safeDouble(Double value) {
+        return value != null ? value : 0.0;
+    }
+
+    private static long safeLong(Long value) {
+        return value != null ? value : 0L;
+    }
+
+    private static java.time.LocalDateTime safeDate(java.time.LocalDateTime value) {
+        return value != null ? value : java.time.LocalDateTime.MIN;
+    }
+
     /**
      * Translates an {@link ApiException} into a user-visible error message and
      * marks the controller as disconnected when the server is unreachable.
      */
     private void handleApiError(String context, ApiException e) {
+        controller.endListRefresh();
         if (e.isConnectionRefused()) {
             controller.setDisconnected();
             controller.setError("Cannot reach server — is JTorrent running?");
