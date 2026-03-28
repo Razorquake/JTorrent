@@ -7,6 +7,7 @@ import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.net.URI;
@@ -134,14 +135,36 @@ public class TorrentApiClient {
      * Adds a torrent via a magnet link.
      *
      * @param magnetLink full magnet URI string
-     * @return the newly created torrent
+     * @return add-response summary from the server
      * @throws ApiException on server or network error
      */
-    public TorrentResponse addMagnet(String magnetLink) throws ApiException {
-        String body = String.format("{\"magnetLink\":\"%s\"}", escapedJson(magnetLink));
-        String json = post("/api/torrents", body);
+    public AddTorrentResponse addMagnet(String magnetLink) throws ApiException {
+        return addMagnet(magnetLink, null, true);
+    }
+
+    /**
+     * Adds a torrent via a magnet link with optional save-path and auto-start
+     * settings.
+     *
+     * @param magnetLink       full magnet URI string
+     * @param savePath         optional custom download directory
+     * @param startImmediately whether the torrent should start right away
+     * @return add-response summary from the server
+     * @throws ApiException on server or network error
+     */
+    public AddTorrentResponse addMagnet(
+            String magnetLink,
+            String savePath,
+            boolean startImmediately) throws ApiException {
+
+        AddTorrentRequest request = new AddTorrentRequest();
+        request.magnetLink = magnetLink;
+        request.savePath = blankToNull(savePath);
+        request.startImmediately = startImmediately;
+
+        String json = post("/api/torrents", writeJson(request));
         try {
-            return mapper.readValue(json, TorrentResponse.class);
+            return mapper.readValue(json, AddTorrentResponse.class);
         } catch (IOException e) {
             throw new ApiException("Failed to parse add-magnet response: " + e.getMessage(), e);
         }
@@ -154,10 +177,27 @@ public class TorrentApiClient {
      * {@code POST /api/torrents/upload} endpoint.
      *
      * @param torrentFile path to the {@code .torrent} file
-     * @return the newly created torrent
+     * @return add-response summary from the server
      * @throws ApiException on server or network error
      */
-    public TorrentResponse uploadTorrentFile(Path torrentFile) throws ApiException {
+    public AddTorrentResponse uploadTorrentFile(Path torrentFile) throws ApiException {
+        return uploadTorrentFile(torrentFile, null, true);
+    }
+
+    /**
+     * Adds a torrent by uploading a {@code .torrent} file with optional save
+     * path and auto-start settings.
+     *
+     * @param torrentFile      path to the {@code .torrent} file
+     * @param savePath         optional custom download directory
+     * @param startImmediately whether the torrent should start right away
+     * @return add-response summary from the server
+     * @throws ApiException on server or network error
+     */
+    public AddTorrentResponse uploadTorrentFile(
+            Path torrentFile,
+            String savePath,
+            boolean startImmediately) throws ApiException {
         if (!Files.exists(torrentFile)) {
             throw new ApiException("File not found: " + torrentFile, null);
         }
@@ -170,34 +210,25 @@ public class TorrentApiClient {
             throw new ApiException("Cannot read .torrent file: " + e.getMessage(), e);
         }
 
-        // Build a minimal multipart/form-data body manually.
-        // The server expects a part named "file".
-        String crlf = "\r\n";
-        String separator = "--" + boundary;
-        String header = separator + crlf
-                + "Content-Disposition: form-data; name=\"file\"; filename=\""
-                + torrentFile.getFileName() + "\"" + crlf
-                + "Content-Type: application/x-bittorrent" + crlf
-                + crlf;
-        String footer = crlf + separator + "--" + crlf;
-
-        byte[] headerBytes = header.getBytes(StandardCharsets.UTF_8);
-        byte[] footerBytes = footer.getBytes(StandardCharsets.UTF_8);
-        byte[] body = new byte[headerBytes.length + fileBytes.length + footerBytes.length];
-        System.arraycopy(headerBytes, 0, body, 0, headerBytes.length);
-        System.arraycopy(fileBytes, 0, body, headerBytes.length, fileBytes.length);
-        System.arraycopy(footerBytes, 0, body, headerBytes.length + fileBytes.length, footerBytes.length);
+        byte[] body = buildUploadMultipartBody(
+                boundary,
+                torrentFile.getFileName().toString(),
+                fileBytes,
+                savePath,
+                startImmediately
+        );
 
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(baseUrl + "/api/torrents/upload"))
                 .timeout(Duration.ofSeconds(30))
                 .header("Content-Type", "multipart/form-data; boundary=" + boundary)
+                .header("Accept", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofByteArray(body))
                 .build();
 
         String json = execute(request);
         try {
-            return mapper.readValue(json, TorrentResponse.class);
+            return mapper.readValue(json, AddTorrentResponse.class);
         } catch (IOException e) {
             throw new ApiException("Failed to parse upload response: " + e.getMessage(), e);
         }
@@ -478,15 +509,6 @@ public class TorrentApiClient {
         }
     }
 
-    /** Minimal JSON-string escaping for the magnet-link body. */
-    private static String escapedJson(String value) {
-        return value
-                .replace("\\", "\\\\")
-                .replace("\"", "\\\"")
-                .replace("\n", "\\n")
-                .replace("\r", "\\r");
-    }
-
     private static String fileIdsBody(List<Long> fileIds) {
         String ids = safeFileIds(fileIds).stream()
                 .map(String::valueOf)
@@ -514,6 +536,68 @@ public class TorrentApiClient {
         } catch (IOException e) {
             throw new ApiException("Failed to encode JSON request: " + e.getMessage(), e);
         }
+    }
+
+    private static byte[] buildUploadMultipartBody(
+            String boundary,
+            String filename,
+            byte[] fileBytes,
+            String savePath,
+            boolean startImmediately) {
+
+        ByteArrayOutputStream body = new ByteArrayOutputStream();
+        writeFilePart(body, boundary, "file", filename, "application/x-bittorrent", fileBytes);
+
+        String normalizedSavePath = blankToNull(savePath);
+        if (normalizedSavePath != null) {
+            writeTextPart(body, boundary, "savePath", normalizedSavePath);
+        }
+        writeTextPart(body, boundary, "startImmediately", Boolean.toString(startImmediately));
+        writeBoundaryLine(body, boundary + "--");
+        return body.toByteArray();
+    }
+
+    private static void writeFilePart(
+            ByteArrayOutputStream body,
+            String boundary,
+            String name,
+            String filename,
+            String contentType,
+            byte[] bytes) {
+
+        writeBoundaryLine(body, boundary);
+        writeUtf8(body, "Content-Disposition: form-data; name=\"" + name + "\"; filename=\"" + filename + "\"\r\n");
+        writeUtf8(body, "Content-Type: " + contentType + "\r\n\r\n");
+        body.writeBytes(bytes);
+        writeUtf8(body, "\r\n");
+    }
+
+    private static void writeTextPart(
+            ByteArrayOutputStream body,
+            String boundary,
+            String name,
+            String value) {
+
+        writeBoundaryLine(body, boundary);
+        writeUtf8(body, "Content-Disposition: form-data; name=\"" + name + "\"\r\n\r\n");
+        writeUtf8(body, value);
+        writeUtf8(body, "\r\n");
+    }
+
+    private static void writeBoundaryLine(ByteArrayOutputStream body, String boundary) {
+        writeUtf8(body, "--" + boundary + "\r\n");
+    }
+
+    private static void writeUtf8(ByteArrayOutputStream body, String value) {
+        body.writeBytes(value.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static String blankToNull(String value) {
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -605,6 +689,34 @@ public class TorrentApiClient {
         @Override
         public String toString() {
             return "TorrentResponse{id=" + id + ", name='" + name + "', status=" + status + "}";
+        }
+    }
+
+    /**
+     * Mirror of the server's {@code AddTorrentRequest}.
+     */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class AddTorrentRequest {
+        public String magnetLink;
+        public String savePath;
+        public Boolean startImmediately = true;
+    }
+
+    /**
+     * Mirror of the server's {@code AddTorrentFileResponse}.
+     */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class AddTorrentResponse {
+        public Long torrentId;
+        public String infoHash;
+        public String name;
+        public Long totalSize;
+        public Integer fileCount;
+        public String message;
+        public Boolean started;
+
+        public String formattedSize() {
+            return formatBytes(totalSize);
         }
     }
 

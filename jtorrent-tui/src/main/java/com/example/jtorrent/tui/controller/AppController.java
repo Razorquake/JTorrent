@@ -138,7 +138,6 @@ public class AppController {
 
     // --- Add-torrent dialog ---
     private AddMode addMode = AddMode.MAGNET;
-    private StringBuilder addInput = new StringBuilder();
 
     // --- Detail panel ---
     private Long detailTorrentId = null;
@@ -253,11 +252,6 @@ public class AppController {
     /** The currently active view / overlay. */
     public synchronized View activeView() {
         return activeView;
-    }
-
-    /** Current text typed into the add-torrent dialog. */
-    public synchronized String addInputText() {
-        return addInput.toString();
     }
 
     /** Whether the add-dialog is in MAGNET or FILE mode. */
@@ -420,21 +414,18 @@ public class AppController {
 
     /** Open the add-torrent dialog (defaults to MAGNET mode). */
     public synchronized void openAddDialog() {
-        addMode  = AddMode.MAGNET;
-        addInput.setLength(0);
+        addMode = AddMode.MAGNET;
         activeView = View.ADD_DIALOG;
     }
 
     /** Cancel the add-dialog without adding a torrent. */
     public synchronized void cancelAddDialog() {
-        addInput.setLength(0);
         activeView = View.LIST;
     }
 
     /** Toggle between MAGNET and FILE input mode inside the add-dialog. */
     public synchronized void toggleAddMode() {
         addMode = (addMode == AddMode.MAGNET) ? AddMode.FILE : AddMode.MAGNET;
-        addInput.setLength(0);   // clear input when switching modes
     }
 
     /** Open the delete-confirmation overlay for the selected torrent. */
@@ -488,28 +479,6 @@ public class AppController {
         if (selectedFileIndex < files.size() - 1) {
             selectedFileIndex++;
         }
-    }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Commands — text input (add-dialog)
-    // ─────────────────────────────────────────────────────────────────────────
-
-    /** Append a printable character to the add-dialog input buffer. */
-    public synchronized void typeAddChar(char c) {
-        addInput.append(c);
-    }
-
-    /** Delete the last character from the add-dialog input buffer. */
-    public synchronized void addBackspace() {
-        if (addInput.length() > 0) addInput.setLength(addInput.length() - 1);
-    }
-
-    /** Returns the add-dialog input text and clears the buffer. */
-    public synchronized String consumeAddInput() {
-        String text = addInput.toString();
-        addInput.setLength(0);
-        activeView = View.LIST;
-        return text;
     }
 
     // ─────────────────────────────────────────────────────────────────────────

@@ -18,8 +18,10 @@ import java.awt.HeadlessException;
 import java.awt.datatransfer.DataFlavor;
 import java.awt.datatransfer.UnsupportedFlavorException;
 import java.io.IOException;
+import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 
 import static dev.tamboui.toolkit.Toolkit.*;
@@ -293,16 +295,30 @@ public class JTorrentApp extends ToolkitApp {
             pasteClipboardIntoAddInput();
             return EventResult.HANDLED;
         }
-        if (isFocusNext(event) || event.isFocusPrevious()) {
-            controller.toggleAddMode();
-            addDialog.clearInput();
+        if (isFocusNext(event)) {
+            addDialog.focusNextField();
             return EventResult.HANDLED;
         }
-        if (isDeleteBackward(event)) {
-            addDialog.inputState().deleteBackward();
+        if (event.isFocusPrevious()) {
+            addDialog.focusPreviousField();
             return EventResult.HANDLED;
         }
-        if (handleTextInputKey(addDialog.inputState(), event)) {
+        if (addDialog.isModeFieldFocused()
+                && (event.code() == KeyCode.LEFT || event.code() == KeyCode.RIGHT || event.isChar(' '))) {
+            addDialog.toggleMode();
+            return EventResult.HANDLED;
+        }
+        if (addDialog.isAutoStartFieldFocused()
+                && (event.code() == KeyCode.LEFT || event.code() == KeyCode.RIGHT || event.isChar(' '))) {
+            addDialog.toggleAutoStart();
+            return EventResult.HANDLED;
+        }
+        var activeInputState = addDialog.activeInputState();
+        if (activeInputState != null && isDeleteBackward(event)) {
+            activeInputState.deleteBackward();
+            return EventResult.HANDLED;
+        }
+        if (activeInputState != null && handleTextInputKey(activeInputState, event)) {
             return EventResult.HANDLED;
         }
         return EventResult.UNHANDLED;
@@ -373,21 +389,43 @@ public class JTorrentApp extends ToolkitApp {
     // ─────────────────────────────────────────────────────────────────────────
 
     private void submitAddDialog() {
-        String input = addDialog.inputText();
+        String input = addDialog.inputText().trim();
         if (input.isBlank()) return;
 
         AppController.AddMode mode = controller.addMode();
+        String savePath = addDialog.savePathText().trim();
+        boolean startImmediately = addDialog.startImmediately();
+
+        Path torrentFile = null;
+        if (mode == AppController.AddMode.FILE) {
+            try {
+                torrentFile = Path.of(input);
+            } catch (InvalidPathException e) {
+                addDialog.clearInput();
+                controller.cancelAddDialog();
+                controller.setError("Add failed: Invalid file path");
+                return;
+            }
+        }
+
         addDialog.clearInput();
         controller.cancelAddDialog();
+
+        Path finalTorrentFile = torrentFile;
         Thread.ofVirtual().start(() -> {
             try {
+                TorrentApiClient.AddTorrentResponse response;
                 if (mode == AppController.AddMode.MAGNET) {
-                    client.addMagnet(input);
-                    runOnRender(() -> controller.setStatus("Torrent added!"));
+                    response = client.addMagnet(input, savePath, startImmediately);
                 } else {
-                    client.uploadTorrentFile(Path.of(input));
-                    runOnRender(() -> controller.setStatus("Torrent uploaded!"));
+                    response = client.uploadTorrentFile(finalTorrentFile, savePath, startImmediately);
                 }
+
+                TorrentApiClient.AddTorrentResponse finalResponse = response;
+                runOnRender(() -> {
+                    controller.setStatus(formatAddSuccess(finalResponse));
+                    requestListRefresh();
+                });
             } catch (TorrentApiClient.ApiException e) {
                 runOnRender(() -> controller.setError("Add failed: " + e.getMessage()));
             }
@@ -675,7 +713,7 @@ public class JTorrentApp extends ToolkitApp {
                 return;
             }
 
-            // Keep it single-line for the one-line add input widget.
+            // Keep it single-line so pasted text behaves predictably in the form.
             String singleLine = text.replace("\r", "").replace("\n", "");
             addDialog.insertText(singleLine);
         } catch (HeadlessException | UnsupportedFlavorException | IOException | IllegalStateException ignored) {
@@ -689,6 +727,30 @@ public class JTorrentApp extends ToolkitApp {
 
     private void pageUp() {
         for (int i = 0; i < 10; i++) controller.moveUp();
+    }
+
+    private String formatAddSuccess(TorrentApiClient.AddTorrentResponse response) {
+        if (response == null) {
+            return "Torrent added";
+        }
+
+        String name = response.name != null && !response.name.isBlank()
+                ? response.name
+                : "torrent";
+
+        List<String> details = new ArrayList<>();
+        if (response.fileCount != null) {
+            details.add(response.fileCount + " files");
+        }
+        if (response.totalSize != null && response.totalSize > 0) {
+            details.add(response.formattedSize());
+        }
+        details.add(Boolean.FALSE.equals(response.started) ? "paused" : "started");
+
+        if (details.isEmpty()) {
+            return "Added " + name;
+        }
+        return "Added " + name + " (" + String.join(", ", details) + ")";
     }
 
     @FunctionalInterface

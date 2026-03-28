@@ -41,6 +41,14 @@ public class HelpOverlay {
                 row(text("  /").bold(),        text("        Open filter bar").dim()),
                 row(text("  Esc").bold(),      text("      Close filter / cancel dialog").dim()),
                 spacer(),
+                // ── Add Dialog ────────────────────────────────────────────
+                text(" Add Dialog").bold().cyan(),
+                row(text("  Tab").bold(),      text("      Next add-form field").dim()),
+                row(text("  Shift+Tab").bold(), text("  Previous add-form field").dim()),
+                row(text("  ← / →").bold(),    text("    Switch source mode or toggle auto-start").dim()),
+                row(text("  Space").bold(),    text("    Toggle selected add-form option").dim()),
+                row(text("  Ctrl+V").bold(),   text("    Paste into the active text field").dim()),
+                spacer(),
                 // ── Detail View ───────────────────────────────────────────
                 text(" Detail View").bold().cyan(),
                 row(text("  Tab").bold(),      text("      Switch detail tabs").dim()),
