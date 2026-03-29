@@ -40,6 +40,7 @@ public class AppController {
     public enum View {
         LIST,
         DETAIL,
+        OPS,
         ADD_DIALOG,
         CONFIRM_DELETE,
         HELP
@@ -64,6 +65,14 @@ public class AppController {
         OVERVIEW,
         FILES,
         STATS
+    }
+
+    /**
+     * Which section is visible inside the operations/health overlay.
+     */
+    public enum OpsTab {
+        OVERVIEW,
+        ORPHANS
     }
 
     /**
@@ -138,6 +147,16 @@ public class AppController {
 
     // --- Add-torrent dialog ---
     private AddMode addMode = AddMode.MAGNET;
+
+    // --- Operations / health overlay ---
+    private OpsTab opsTab = OpsTab.OVERVIEW;
+    private TorrentApiClient.SystemHealthResponse systemHealth = null;
+    private TorrentApiClient.SystemInfoResponse systemInfo = null;
+    private TorrentApiClient.StorageInfoResponse storageInfo = null;
+    private List<String> orphanedFiles = Collections.emptyList();
+    private int selectedOrphanIndex = 0;
+    private boolean opsLoading = false;
+    private String opsError = null;
 
     // --- Detail panel ---
     private Long detailTorrentId = null;
@@ -257,6 +276,54 @@ public class AppController {
     /** Whether the add-dialog is in MAGNET or FILE mode. */
     public synchronized AddMode addMode() {
         return addMode;
+    }
+
+    /** Active operations/health tab. */
+    public synchronized OpsTab opsTab() {
+        return opsTab;
+    }
+
+    /** Latest system health snapshot, or {@code null} if not loaded yet. */
+    public synchronized TorrentApiClient.SystemHealthResponse systemHealth() {
+        return systemHealth;
+    }
+
+    /** Latest system info snapshot, or {@code null} if not loaded yet. */
+    public synchronized TorrentApiClient.SystemInfoResponse systemInfo() {
+        return systemInfo;
+    }
+
+    /** Latest storage snapshot, or {@code null} if not loaded yet. */
+    public synchronized TorrentApiClient.StorageInfoResponse storageInfo() {
+        return storageInfo;
+    }
+
+    /** Snapshot of orphaned file paths from the last refresh. */
+    public synchronized List<String> orphanedFiles() {
+        return List.copyOf(orphanedFiles);
+    }
+
+    /** Zero-based selection inside the orphaned-file list. */
+    public synchronized int selectedOrphanIndex() {
+        return selectedOrphanIndex;
+    }
+
+    /** Currently highlighted orphaned file, or {@code null} if none exist. */
+    public synchronized String selectedOrphanPath() {
+        if (orphanedFiles.isEmpty() || selectedOrphanIndex >= orphanedFiles.size()) {
+            return null;
+        }
+        return orphanedFiles.get(selectedOrphanIndex);
+    }
+
+    /** True while the operations overlay is refreshing. */
+    public synchronized boolean isOpsLoading() {
+        return opsLoading;
+    }
+
+    /** Last operations-overlay error, or {@code null}. */
+    public synchronized String opsError() {
+        return opsError;
     }
 
     /** ID of the torrent currently open in the detail panel, if any. */
@@ -418,6 +485,29 @@ public class AppController {
         activeView = View.ADD_DIALOG;
     }
 
+    /** Open the operations / health overlay. */
+    public synchronized void openOps() {
+        opsTab = OpsTab.OVERVIEW;
+        opsLoading = true;
+        opsError = null;
+        activeView = View.OPS;
+    }
+
+    /** Close the operations overlay and return to the list. */
+    public synchronized void closeOps() {
+        activeView = View.LIST;
+    }
+
+    /** Switch to the next operations tab. */
+    public synchronized void nextOpsTab() {
+        opsTab = (opsTab == OpsTab.OVERVIEW) ? OpsTab.ORPHANS : OpsTab.OVERVIEW;
+    }
+
+    /** Switch to the previous operations tab. */
+    public synchronized void previousOpsTab() {
+        nextOpsTab();
+    }
+
     /** Cancel the add-dialog without adding a torrent. */
     public synchronized void cancelAddDialog() {
         activeView = View.LIST;
@@ -478,6 +568,20 @@ public class AppController {
         List<TorrentApiClient.TorrentFileResponse> files = detailFiles();
         if (selectedFileIndex < files.size() - 1) {
             selectedFileIndex++;
+        }
+    }
+
+    /** Move the orphan-file selection one row up. */
+    public synchronized void moveOrphanUp() {
+        if (selectedOrphanIndex > 0) {
+            selectedOrphanIndex--;
+        }
+    }
+
+    /** Move the orphan-file selection one row down. */
+    public synchronized void moveOrphanDown() {
+        if (selectedOrphanIndex < orphanedFiles.size() - 1) {
+            selectedOrphanIndex++;
         }
     }
 
@@ -547,6 +651,38 @@ public class AppController {
     public synchronized void clearStatus() {
         statusMessage = null;
         statusIsError = false;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Commands — operations overlay data
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /** Mark the operations overlay as loading. */
+    public synchronized void beginOpsRefresh() {
+        opsLoading = true;
+        opsError = null;
+    }
+
+    /** Replace the operations snapshot with fresh server data. */
+    public synchronized void setOpsData(
+            TorrentApiClient.SystemHealthResponse health,
+            TorrentApiClient.SystemInfoResponse info,
+            TorrentApiClient.StorageInfoResponse storage,
+            List<String> orphanedFiles) {
+
+        systemHealth = health;
+        systemInfo = info;
+        storageInfo = storage;
+        this.orphanedFiles = orphanedFiles == null ? Collections.emptyList() : List.copyOf(orphanedFiles);
+        opsLoading = false;
+        opsError = null;
+        clampSelectedOrphanIndex();
+    }
+
+    /** Record an operations refresh failure without dropping the last good snapshot. */
+    public synchronized void setOpsError(String message) {
+        opsLoading = false;
+        opsError = message;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -758,6 +894,14 @@ public class AppController {
             selectedFileIndex = 0;
         } else if (selectedFileIndex >= size) {
             selectedFileIndex = size - 1;
+        }
+    }
+
+    private void clampSelectedOrphanIndex() {
+        if (orphanedFiles.isEmpty()) {
+            selectedOrphanIndex = 0;
+        } else if (selectedOrphanIndex >= orphanedFiles.size()) {
+            selectedOrphanIndex = orphanedFiles.size() - 1;
         }
     }
 

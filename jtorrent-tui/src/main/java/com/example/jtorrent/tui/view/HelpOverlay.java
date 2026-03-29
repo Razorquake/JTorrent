@@ -29,6 +29,7 @@ public class HelpOverlay {
                 // ── Actions ───────────────────────────────────────────────
                 text(" Actions").bold().cyan(),
                 row(text("  Enter").bold(),    text("    Open detail panel").dim()),
+                row(text("  o").bold(),        text("        Open operations / health overlay").dim()),
                 row(text("  a").bold(),        text("        Add torrent (magnet or file)").dim()),
                 row(text("  p").bold(),        text("        Pause selected torrent").dim()),
                 row(text("  r").bold(),        text("        Resume selected torrent").dim()),
@@ -48,6 +49,13 @@ public class HelpOverlay {
                 row(text("  ← / →").bold(),    text("    Switch source mode or toggle auto-start").dim()),
                 row(text("  Space").bold(),    text("    Toggle selected add-form option").dim()),
                 row(text("  Ctrl+V").bold(),   text("    Paste into the active text field").dim()),
+                spacer(),
+                // ── Operations Overlay ───────────────────────────────────
+                text(" Operations").bold().cyan(),
+                row(text("  Tab").bold(),      text("      Switch operations tabs").dim()),
+                row(text("  r").bold(),        text("        Refresh health / storage / orphan data").dim()),
+                row(text("  j / k").bold(),    text("    Move orphan selection (Orphans tab)").dim()),
+                row(text("  c").bold(),        text("        Clean up orphaned files (Orphans tab)").dim()),
                 spacer(),
                 // ── Detail View ───────────────────────────────────────────
                 text(" Detail View").bold().cyan(),

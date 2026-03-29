@@ -55,6 +55,11 @@ import java.util.stream.Collectors;
  *   <li>POST /api/torrents/{id}/files/prioritize — set selected files high priority</li>
  *   <li>POST /api/torrents/{id}/files/deprioritize — set selected files low priority</li>
  *   <li>POST /api/torrents/{id}/files/reset-priorities — reset all file priorities</li>
+ *   <li>GET  /api/files/storage        — storage usage for the downloads directory</li>
+ *   <li>GET  /api/files/orphans        — orphaned files on disk</li>
+ *   <li>DELETE /api/files/orphans      — clean orphaned files</li>
+ *   <li>GET  /api/system/health        — service health and session state</li>
+ *   <li>GET  /api/system/info          — service metadata and download directory</li>
  *   <li>GET  /api/stats/overall         — global statistics</li>
  * </ul>
  */
@@ -430,6 +435,98 @@ public class TorrentApiClient {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
+    // System / operations
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Returns the server's health payload.
+     *
+     * <p>The endpoint returns HTTP 503 when the torrent session is down, but it
+     * still includes a useful JSON body. This method preserves that payload so
+     * the TUI can render a "DOWN" state instead of only showing a transport
+     * error.
+     *
+     * @return health DTO
+     * @throws ApiException on network failure or unexpected HTTP status
+     */
+    public SystemHealthResponse getSystemHealth() throws ApiException {
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(baseUrl + "/api/system/health"))
+                .timeout(Duration.ofSeconds(10))
+                .header("Accept", "application/json")
+                .GET()
+                .build();
+
+        HttpResponse<String> response = send(request);
+        int status = response.statusCode();
+        if (status != 200 && status != 503) {
+            throw new ApiException("Server returned HTTP " + status + " for " + request.uri(), status);
+        }
+
+        try {
+            return mapper.readValue(response.body(), SystemHealthResponse.class);
+        } catch (IOException e) {
+            throw new ApiException("Failed to parse system health: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Returns service metadata and download-directory information.
+     */
+    public SystemInfoResponse getSystemInfo() throws ApiException {
+        String json = get("/api/system/info");
+        try {
+            return mapper.readValue(json, SystemInfoResponse.class);
+        } catch (IOException e) {
+            throw new ApiException("Failed to parse system info: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Returns storage usage for the downloads directory.
+     */
+    public StorageInfoResponse getStorageInfo() throws ApiException {
+        String json = get("/api/files/storage");
+        try {
+            return mapper.readValue(json, StorageInfoResponse.class);
+        } catch (IOException e) {
+            throw new ApiException("Failed to parse storage info: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Returns orphaned file paths from the downloads directory.
+     */
+    public List<String> getOrphanedFiles() throws ApiException {
+        String json = get("/api/files/orphans");
+        try {
+            String[] array = mapper.readValue(json, String[].class);
+            return Arrays.asList(array);
+        } catch (IOException e) {
+            throw new ApiException("Failed to parse orphaned files: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Deletes orphaned files and returns a cleanup summary.
+     */
+    public CleanupOrphansResponse cleanupOrphanedFiles() throws ApiException {
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(baseUrl + "/api/files/orphans"))
+                .timeout(Duration.ofSeconds(30))
+                .header("Accept", "application/json")
+                .DELETE()
+                .build();
+
+        String json = execute(request);
+        try {
+            return mapper.readValue(json, CleanupOrphansResponse.class);
+        } catch (IOException e) {
+            throw new ApiException("Failed to parse orphan cleanup response: " + e.getMessage(), e);
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
     // Statistics
     // ─────────────────────────────────────────────────────────────────────────
 
@@ -484,29 +581,31 @@ public class TorrentApiClient {
         return execute(request);
     }
 
-    private String execute(HttpRequest request) throws ApiException {
+    private HttpResponse<String> send(HttpRequest request) throws ApiException {
         try {
             HttpResponse<String> response =
                     http.send(request, HttpResponse.BodyHandlers.ofString());
 
-            int status = response.statusCode();
-            log.debug("HTTP {} {} → {}", request.method(), request.uri(), status);
-
-            if (status >= 200 && status < 300) {
-                return response.body();
-            }
-
-            throw new ApiException(
-                    "Server returned HTTP " + status + " for " + request.uri(),
-                    status
-            );
-
+            log.debug("HTTP {} {} → {}", request.method(), request.uri(), response.statusCode());
+            return response;
         } catch (IOException e) {
             throw new ApiException("Network error: " + e.getMessage(), e);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new ApiException("Request interrupted", e);
         }
+    }
+
+    private String execute(HttpRequest request) throws ApiException {
+        HttpResponse<String> response = send(request);
+        int status = response.statusCode();
+        if (status >= 200 && status < 300) {
+            return response.body();
+        }
+        throw new ApiException(
+                "Server returned HTTP " + status + " for " + request.uri(),
+                status
+        );
     }
 
     private static String fileIdsBody(List<Long> fileIds) {
@@ -718,6 +817,88 @@ public class TorrentApiClient {
         public String formattedSize() {
             return formatBytes(totalSize);
         }
+    }
+
+    /**
+     * Mirror of the system health payload.
+     */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class SystemHealthResponse {
+        public String status;
+        public LocalDateTime timestamp;
+        public Boolean sessionRunning;
+        public String service;
+        public String version;
+
+        public boolean isUp() {
+            return "UP".equalsIgnoreCase(status);
+        }
+    }
+
+    /**
+     * Mirror of the system info payload.
+     */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class SystemInfoResponse {
+        public String service;
+        public String version;
+        public Boolean sessionRunning;
+        public LocalDateTime timestamp;
+        public Integer activeTorrents;
+        public String downloadDirectory;
+    }
+
+    /**
+     * Mirror of the file-management storage payload.
+     */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class StorageInfoResponse {
+        public String path;
+        public Long totalBytes;
+        public Long usedBytes;
+        public Long freeBytes;
+        public String totalFormatted;
+        public String usedFormatted;
+        public String freeFormatted;
+        public Long usedByTorrentsBytes;
+        public String usedByTorrentsFormatted;
+
+        public String displayTotal() {
+            return totalFormatted != null && !totalFormatted.isBlank()
+                    ? totalFormatted
+                    : safeDisplayBytes(totalBytes);
+        }
+
+        public String displayUsed() {
+            return usedFormatted != null && !usedFormatted.isBlank()
+                    ? usedFormatted
+                    : safeDisplayBytes(usedBytes);
+        }
+
+        public String displayFree() {
+            return freeFormatted != null && !freeFormatted.isBlank()
+                    ? freeFormatted
+                    : safeDisplayBytes(freeBytes);
+        }
+
+        public String displayTrackedUsage() {
+            return usedByTorrentsFormatted != null && !usedByTorrentsFormatted.isBlank()
+                    ? usedByTorrentsFormatted
+                    : safeDisplayBytes(usedByTorrentsBytes);
+        }
+
+        private String safeDisplayBytes(Long bytes) {
+            return bytes != null && bytes >= 0 ? formatBytes(bytes) : "Unknown";
+        }
+    }
+
+    /**
+     * Mirror of the orphan cleanup result map.
+     */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class CleanupOrphansResponse {
+        public Integer deletedCount;
+        public String message;
     }
 
     /**

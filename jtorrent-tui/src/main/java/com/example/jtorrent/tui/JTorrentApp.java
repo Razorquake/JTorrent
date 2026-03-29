@@ -35,9 +35,9 @@ import static dev.tamboui.toolkit.Toolkit.*;
  *  │ JTorrentApp (ToolkitApp)                   │
  *  │                                            │
  *  │  render()  ──► dock()                      │
- *  │                  .top(GlobalStatsBar)       │
- *  │                  .center(active view)       │
- *  │                  .bottom(status)            │
+ *  │                  .top(GlobalStatsBar)      │
+ *  │                  .center(active view)      │
+ *  │                  .bottom(status)           │
  *  │                                            │
  *  │  onStart() ──► PollingService.start()      │
  *  │  onStop()  ──► PollingService.stop()       │
@@ -84,6 +84,7 @@ public class JTorrentApp extends ToolkitApp {
     private final GlobalStatsBar statsBar;
     private final TorrentListView listView;
     private final TorrentDetailPanel detailPanel;
+    private final OpsOverlay opsOverlay;
     private final AddTorrentDialog addDialog;
     private final HelpOverlay helpOverlay;
 
@@ -98,6 +99,7 @@ public class JTorrentApp extends ToolkitApp {
         this.statsBar    = new GlobalStatsBar(controller);
         this.listView    = new TorrentListView(controller);
         this.detailPanel = new TorrentDetailPanel(controller);
+        this.opsOverlay  = new OpsOverlay(controller);
         this.addDialog   = new AddTorrentDialog(controller);
         this.helpOverlay = new HelpOverlay();
     }
@@ -145,6 +147,7 @@ public class JTorrentApp extends ToolkitApp {
 
         Element center = switch (activeView) {
             case DETAIL         -> detailPanel.render();
+            case OPS            -> opsOverlay.render();
             case ADD_DIALOG     -> addDialog.render();
             case CONFIRM_DELETE -> confirmDeleteOverlay();
             case HELP           -> helpOverlay.render();
@@ -172,6 +175,7 @@ public class JTorrentApp extends ToolkitApp {
         return switch (view) {
             case LIST           -> handleListKey(event);
             case DETAIL         -> handleDetailKey(event);
+            case OPS            -> handleOpsKey(event);
             case ADD_DIALOG     -> handleAddDialogKey(event);
             case CONFIRM_DELETE -> handleConfirmDeleteKey(event);
             case HELP           -> handleHelpKey(event);
@@ -230,6 +234,11 @@ public class JTorrentApp extends ToolkitApp {
             requestDetailRefresh();
             return EventResult.HANDLED;
         }
+        if (event.isChar('o'))  {
+            controller.openOps();
+            requestOpsRefresh();
+            return EventResult.HANDLED;
+        }
         if (event.isChar('a'))  {
             addDialog.clearInput();
             controller.openAddDialog();
@@ -276,6 +285,33 @@ public class JTorrentApp extends ToolkitApp {
         if (event.isChar('d'))  { controller.openConfirmDelete();    return EventResult.HANDLED; }
         if (event.isChar('c'))  { asyncRecheck(); return EventResult.HANDLED; }
         if (event.isChar('t'))  { asyncReannounce(); return EventResult.HANDLED; }
+        return EventResult.UNHANDLED;
+    }
+
+    // ── Operations overlay keys ──────────────────────────────────────────────
+
+    private EventResult handleOpsKey(dev.tamboui.tui.event.KeyEvent event) {
+        if (event.isCancel()) {
+            controller.closeOps();
+            return EventResult.HANDLED;
+        }
+        if (isFocusNext(event) || event.code() == KeyCode.RIGHT) {
+            controller.nextOpsTab();
+            return EventResult.HANDLED;
+        }
+        if (event.isFocusPrevious() || event.code() == KeyCode.LEFT) {
+            controller.previousOpsTab();
+            return EventResult.HANDLED;
+        }
+        if (event.isChar('r')) {
+            requestOpsRefresh();
+            return EventResult.HANDLED;
+        }
+        if (controller.opsTab() == AppController.OpsTab.ORPHANS) {
+            if (event.isDown() || event.isChar('j')) { controller.moveOrphanDown(); return EventResult.HANDLED; }
+            if (event.isUp() || event.isChar('k'))   { controller.moveOrphanUp();   return EventResult.HANDLED; }
+            if (event.isChar('c'))                   { asyncCleanupOrphans();        return EventResult.HANDLED; }
+        }
         return EventResult.UNHANDLED;
     }
 
@@ -518,6 +554,20 @@ public class JTorrentApp extends ToolkitApp {
         });
     }
 
+    private void asyncCleanupOrphans() {
+        Thread.ofVirtual().start(() -> {
+            try {
+                TorrentApiClient.CleanupOrphansResponse response = client.cleanupOrphanedFiles();
+                runOnRender(() -> {
+                    controller.setStatus(formatCleanupMessage(response));
+                    requestOpsRefresh();
+                });
+            } catch (TorrentApiClient.ApiException e) {
+                runOnRender(() -> controller.setError("Cleanup failed: " + e.getMessage()));
+            }
+        });
+    }
+
     private void asyncTorrentAction(
             String successMessage,
             String failurePrefix,
@@ -576,6 +626,11 @@ public class JTorrentApp extends ToolkitApp {
         Thread.ofVirtual().start(() -> loadDetailSnapshot(torrentId));
     }
 
+    private void requestOpsRefresh() {
+        controller.beginOpsRefresh();
+        Thread.ofVirtual().start(this::loadOpsSnapshot);
+    }
+
     private void loadDetailSnapshot(long torrentId) {
         try {
             TorrentApiClient.TorrentResponse detail = client.getTorrent(torrentId);
@@ -594,6 +649,22 @@ public class JTorrentApp extends ToolkitApp {
                     ? "Cannot refresh detail while the server is offline."
                     : "Failed to refresh detail: " + e.getMessage();
             runOnRender(() -> controller.setDetailError(message));
+        }
+    }
+
+    private void loadOpsSnapshot() {
+        try {
+            TorrentApiClient.SystemHealthResponse health = client.getSystemHealth();
+            TorrentApiClient.SystemInfoResponse info = client.getSystemInfo();
+            TorrentApiClient.StorageInfoResponse storage = client.getStorageInfo();
+            List<String> orphanedFiles = client.getOrphanedFiles();
+
+            runOnRender(() -> controller.setOpsData(health, info, storage, orphanedFiles));
+        } catch (TorrentApiClient.ApiException e) {
+            String message = e.isConnectionRefused()
+                    ? "Cannot refresh operations while the server is offline."
+                    : "Failed to refresh operations: " + e.getMessage();
+            runOnRender(() -> controller.setOpsError(message));
         }
     }
 
@@ -751,6 +822,19 @@ public class JTorrentApp extends ToolkitApp {
             return "Added " + name;
         }
         return "Added " + name + " (" + String.join(", ", details) + ")";
+    }
+
+    private String formatCleanupMessage(TorrentApiClient.CleanupOrphansResponse response) {
+        if (response == null) {
+            return "Orphan cleanup complete";
+        }
+        if (response.message != null && !response.message.isBlank()) {
+            return response.message;
+        }
+        if (response.deletedCount != null) {
+            return "Deleted " + response.deletedCount + " orphaned file(s)";
+        }
+        return "Orphan cleanup complete";
     }
 
     @FunctionalInterface
