@@ -104,6 +104,10 @@ public class GlobalStatsBar {
                         text(stats.totalActivePeers + " peers").dim(),
                         separator(),
 
+                        // ── Transport mode ───────────────────────────────────────
+                        liveBadge(controller.isLiveUpdatesConnected()),
+                        separator(),
+
                         // ── Keybinding hints (right-aligned via spacer) ──────────
                         spacer(),
                         text("[?] Help").dim(),
@@ -149,6 +153,12 @@ public class GlobalStatsBar {
      */
     private static Element separator() {
         return text("  │  ").dim();
+    }
+
+    private static Element liveBadge(boolean liveConnected) {
+        return liveConnected
+                ? text(" LIVE ").green().bold()
+                : text(" POLL ").yellow().bold();
     }
 
     /**

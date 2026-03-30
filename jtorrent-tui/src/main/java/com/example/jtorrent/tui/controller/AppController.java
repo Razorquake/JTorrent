@@ -2,6 +2,9 @@ package com.example.jtorrent.tui.controller;
 
 import com.example.jtorrent.tui.api.TorrentApiClient;
 
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.Collections;
 import java.util.List;
 
@@ -138,6 +141,9 @@ public class AppController {
     private long totalResults = 0;
     private int pageSize = 20;
     private boolean listLoading = false;
+    private List<TorrentApiClient.TorrentResponse> liveTorrentSnapshot = Collections.emptyList();
+    private boolean liveSnapshotAvailable = false;
+    private boolean liveUpdatesConnected = false;
 
     // --- Global stats ---
     private TorrentApiClient.StatsResponse stats = new TorrentApiClient.StatsResponse();
@@ -246,6 +252,16 @@ public class AppController {
     /** True while the list is waiting on a fresh server response. */
     public synchronized boolean isListLoading() {
         return listLoading;
+    }
+
+    /** True when websocket live updates are currently connected. */
+    public synchronized boolean isLiveUpdatesConnected() {
+        return liveUpdatesConnected;
+    }
+
+    /** True once at least one live websocket torrent snapshot has been received. */
+    public synchronized boolean hasLiveTorrentSnapshot() {
+        return liveSnapshotAvailable;
     }
 
     /** True when there is another page after the current one. */
@@ -888,6 +904,38 @@ public class AppController {
         this.listLoading = false;
     }
 
+    /**
+     * Mark the websocket live-update channel as connected or disconnected.
+     */
+    public synchronized void setLiveUpdatesConnected(boolean connected) {
+        this.liveUpdatesConnected = connected;
+    }
+
+    /**
+     * Replace the cached full torrent list received from websocket live updates
+     * and project the current page/scope/query from it.
+     */
+    public synchronized void setLiveTorrentSnapshot(List<TorrentApiClient.TorrentResponse> snapshot) {
+        liveTorrentSnapshot = snapshot == null ? Collections.emptyList() : List.copyOf(snapshot);
+        liveSnapshotAvailable = true;
+        liveUpdatesConnected = true;
+        connected = true;
+        applyCurrentListQueryToLiveSnapshot();
+        syncDetailHeaderFromLiveSnapshot();
+    }
+
+    /**
+     * Re-apply the current list query/sort/page onto the cached websocket
+     * snapshot. Used when the user changes views while live updates are active.
+     */
+    public synchronized void refreshVisibleListFromLiveSnapshot() {
+        if (!liveSnapshotAvailable) {
+            return;
+        }
+        applyCurrentListQueryToLiveSnapshot();
+        syncDetailHeaderFromLiveSnapshot();
+    }
+
     private void clampSelectedFileIndex() {
         int size = detailFiles().size();
         if (size == 0) {
@@ -936,5 +984,121 @@ public class AppController {
             selectedIndex = 0;
         }
         syncSelectedTorrentId();
+    }
+
+    private void applyCurrentListQueryToLiveSnapshot() {
+        List<TorrentApiClient.TorrentResponse> filtered = new ArrayList<>(liveTorrentSnapshot);
+        filtered.removeIf(t -> !matchesCurrentScope(t) || !matchesCurrentQuery(t));
+        filtered.sort(currentListComparator());
+
+        int safePageSize = Math.max(pageSize, 1);
+        int total = filtered.size();
+        int computedTotalPages = Math.max((int) Math.ceil(total / (double) safePageSize), 1);
+        int safePage = Math.min(page, computedTotalPages - 1);
+        int fromIndex = Math.min(safePage * safePageSize, total);
+        int toIndex = Math.min(fromIndex + safePageSize, total);
+
+        torrents = List.copyOf(filtered.subList(fromIndex, toIndex));
+        page = safePage;
+        totalPages = computedTotalPages;
+        totalResults = total;
+        listLoading = false;
+        syncSelectionAfterListRefresh();
+    }
+
+    private boolean matchesCurrentScope(TorrentApiClient.TorrentResponse torrent) {
+        return switch (listScope) {
+            case ALL -> true;
+            case ACTIVE -> matchesAnyStatus(torrent, "DOWNLOADING", "SEEDING", "CHECKING");
+            case COMPLETED -> matchesStatus(torrent, "COMPLETED");
+            case ERRORS -> matchesStatus(torrent, "ERROR")
+                    || (torrent.errorMessage != null && !torrent.errorMessage.isBlank());
+            case STALLED -> matchesStatus(torrent, "DOWNLOADING")
+                    && (torrent.downloadSpeed == null || torrent.downloadSpeed == 0)
+                    && (torrent.peers == null || torrent.peers == 0);
+        };
+    }
+
+    private boolean matchesCurrentQuery(TorrentApiClient.TorrentResponse torrent) {
+        if (filterInput.isEmpty()) {
+            return true;
+        }
+        if (torrent.name == null) {
+            return false;
+        }
+        return torrent.name.toLowerCase().contains(filterInput.toString().toLowerCase());
+    }
+
+    private Comparator<TorrentApiClient.TorrentResponse> currentListComparator() {
+        Comparator<TorrentApiClient.TorrentResponse> comparator = switch (listSort) {
+            case NAME -> Comparator.comparing(
+                    t -> safeString(t.name),
+                    String.CASE_INSENSITIVE_ORDER
+            );
+            case PROGRESS -> Comparator.comparing(t -> safeDouble(t.progress));
+            case SIZE -> Comparator.comparing(t -> safeLong(t.totalSize));
+            case ADDED -> Comparator.comparing(t -> safeDate(t.addedDate));
+        };
+        return sortAscending ? comparator : comparator.reversed();
+    }
+
+    private void syncDetailHeaderFromLiveSnapshot() {
+        if (detailTorrentId == null || liveTorrentSnapshot.isEmpty()) {
+            return;
+        }
+
+        liveTorrentSnapshot.stream()
+                .filter(t -> detailTorrentId.equals(t.id))
+                .findFirst()
+                .ifPresent(t -> {
+                    if (detailTorrent == null) {
+                        detailTorrent = t;
+                    } else {
+                        detailTorrent.name = t.name;
+                        detailTorrent.status = t.status;
+                        detailTorrent.progress = t.progress;
+                        detailTorrent.totalSize = t.totalSize;
+                        detailTorrent.downloadedSize = t.downloadedSize;
+                        detailTorrent.uploadedSize = t.uploadedSize;
+                        detailTorrent.downloadSpeed = t.downloadSpeed;
+                        detailTorrent.uploadSpeed = t.uploadSpeed;
+                        detailTorrent.peers = t.peers;
+                        detailTorrent.seeds = t.seeds;
+                        detailTorrent.errorMessage = t.errorMessage;
+                        detailTorrent.completedDate = t.completedDate;
+                    }
+                });
+    }
+
+    private boolean matchesStatus(TorrentApiClient.TorrentResponse torrent, String status) {
+        return torrent != null && torrent.status != null && torrent.status.equalsIgnoreCase(status);
+    }
+
+    private boolean matchesAnyStatus(TorrentApiClient.TorrentResponse torrent, String... statuses) {
+        if (torrent == null || torrent.status == null) {
+            return false;
+        }
+        for (String status : statuses) {
+            if (torrent.status.equalsIgnoreCase(status)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static String safeString(String value) {
+        return value != null ? value : "";
+    }
+
+    private static double safeDouble(Double value) {
+        return value != null ? value : 0.0;
+    }
+
+    private static long safeLong(Long value) {
+        return value != null ? value : 0L;
+    }
+
+    private static LocalDateTime safeDate(LocalDateTime value) {
+        return value != null ? value : LocalDateTime.MIN;
     }
 }

@@ -3,6 +3,7 @@ package com.example.jtorrent.tui;
 
 import com.example.jtorrent.tui.api.TorrentApiClient;
 import com.example.jtorrent.tui.controller.AppController;
+import com.example.jtorrent.tui.live.LiveUpdateService;
 import com.example.jtorrent.tui.polling.PollingService;
 import com.example.jtorrent.tui.view.*;
 import dev.tamboui.layout.Constraint;
@@ -76,6 +77,7 @@ public class JTorrentApp extends ToolkitApp {
     private final AppController controller  = new AppController();
     private final TorrentApiClient client;
     private final PollingService poller;
+    private final LiveUpdateService liveUpdates;
 
     // ─────────────────────────────────────────────────────────────────────────
     // View components (constructed once, re-used every frame)
@@ -96,6 +98,7 @@ public class JTorrentApp extends ToolkitApp {
     public JTorrentApp(String serverUrl) {
         this.client      = new TorrentApiClient(serverUrl);
         this.poller      = new PollingService(client, controller);
+        this.liveUpdates = new LiveUpdateService(serverUrl, controller);
         this.statsBar    = new GlobalStatsBar(controller);
         this.listView    = new TorrentListView(controller);
         this.detailPanel = new TorrentDetailPanel(controller);
@@ -130,10 +133,12 @@ public class JTorrentApp extends ToolkitApp {
     @Override
     protected void onStart() {
         poller.start();
+        liveUpdates.start();
     }
 
     @Override
     protected void onStop() {
+        liveUpdates.stop();
         poller.stop();
     }
 

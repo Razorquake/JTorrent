@@ -113,10 +113,11 @@ public class PollingService {
      */
     private void poll() {
         try {
+            boolean liveConnected = controller.isLiveUpdatesConnected();
             boolean torrentsOk = pollTorrents();
             boolean statsOk = pollStats();
             boolean detailOk = pollDetailIfOpen();
-            if (torrentsOk && statsOk && detailOk) {
+            if (torrentsOk && statsOk && detailOk && !liveConnected) {
                 controller.clearStatus();
             }
         } catch (Exception e) {
@@ -129,6 +130,11 @@ public class PollingService {
     }
 
     private boolean pollTorrents() {
+        if (controller.isLiveUpdatesConnected() && controller.hasLiveTorrentSnapshot()) {
+            controller.refreshVisibleListFromLiveSnapshot();
+            return true;
+        }
+
         try {
             if (controller.listScope() == AppController.ListScope.STALLED) {
                 List<TorrentApiClient.TorrentResponse> list = loadStalledScopePage();
@@ -161,6 +167,10 @@ public class PollingService {
     }
 
     private boolean pollStats() {
+        if (controller.isLiveUpdatesConnected()) {
+            return true;
+        }
+
         try {
             TorrentApiClient.StatsResponse stats = client.getStats();
             controller.setStats(stats);
@@ -302,6 +312,10 @@ public class PollingService {
      */
     private void handleApiError(String context, ApiException e) {
         controller.endListRefresh();
+        if (controller.isLiveUpdatesConnected()) {
+            log.debug("Ignoring HTTP polling error for {} because live updates are connected", context);
+            return;
+        }
         if (e.isConnectionRefused()) {
             controller.setDisconnected();
             controller.setError("Cannot reach server — is JTorrent running?");
