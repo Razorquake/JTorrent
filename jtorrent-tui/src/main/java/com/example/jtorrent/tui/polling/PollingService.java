@@ -125,7 +125,7 @@ public class PollingService {
             // ApiExceptions are handled inside the individual methods.
             log.debug("Unexpected error during poll: {}", e.getMessage(), e);
             controller.setDisconnected();
-            controller.setError("Poll error: " + e.getMessage());
+            controller.setError("Poll error: " + e.getMessage(), "Polling");
         }
     }
 
@@ -318,10 +318,10 @@ public class PollingService {
         }
         if (e.isConnectionRefused()) {
             controller.setDisconnected();
-            controller.setError("Cannot reach server — is JTorrent running?");
+            controller.setError("Cannot reach server — is JTorrent running?", "Polling");
             log.debug("Connection refused while polling {}", context);
         } else {
-            controller.setError("Server error (" + e.getStatusCode() + ") fetching " + context);
+            controller.setError("Server error (" + e.getStatusCode() + ") fetching " + context, "Polling");
             log.debug("HTTP {} while polling {}: {}", e.getStatusCode(), context, e.getMessage());
         }
     }

@@ -87,6 +87,7 @@ public class JTorrentApp extends ToolkitApp {
     private final TorrentListView listView;
     private final TorrentDetailPanel detailPanel;
     private final OpsOverlay opsOverlay;
+    private final NotificationOverlay notificationOverlay;
     private final AddTorrentDialog addDialog;
     private final HelpOverlay helpOverlay;
 
@@ -103,6 +104,7 @@ public class JTorrentApp extends ToolkitApp {
         this.listView    = new TorrentListView(controller);
         this.detailPanel = new TorrentDetailPanel(controller);
         this.opsOverlay  = new OpsOverlay(controller);
+        this.notificationOverlay = new NotificationOverlay(controller);
         this.addDialog   = new AddTorrentDialog(controller);
         this.helpOverlay = new HelpOverlay();
     }
@@ -153,6 +155,7 @@ public class JTorrentApp extends ToolkitApp {
         Element center = switch (activeView) {
             case DETAIL         -> detailPanel.render();
             case OPS            -> opsOverlay.render();
+            case NOTIFICATIONS  -> notificationOverlay.render();
             case ADD_DIALOG     -> addDialog.render();
             case CONFIRM_DELETE -> confirmDeleteOverlay();
             case HELP           -> helpOverlay.render();
@@ -177,10 +180,20 @@ public class JTorrentApp extends ToolkitApp {
             return EventResult.HANDLED;
         }
 
+        if (event.isChar('N')
+                && view != AppController.View.NOTIFICATIONS
+                && view != AppController.View.ADD_DIALOG
+                && view != AppController.View.CONFIRM_DELETE
+                && !(view == AppController.View.LIST && controller.isFilterMode())) {
+            controller.openNotifications(view);
+            return EventResult.HANDLED;
+        }
+
         return switch (view) {
             case LIST           -> handleListKey(event);
             case DETAIL         -> handleDetailKey(event);
             case OPS            -> handleOpsKey(event);
+            case NOTIFICATIONS  -> handleNotificationsKey(event);
             case ADD_DIALOG     -> handleAddDialogKey(event);
             case CONFIRM_DELETE -> handleConfirmDeleteKey(event);
             case HELP           -> handleHelpKey(event);
@@ -317,6 +330,21 @@ public class JTorrentApp extends ToolkitApp {
             if (event.isUp() || event.isChar('k'))   { controller.moveOrphanUp();   return EventResult.HANDLED; }
             if (event.isChar('c'))                   { asyncCleanupOrphans();        return EventResult.HANDLED; }
         }
+        return EventResult.UNHANDLED;
+    }
+
+    // ── Notification overlay keys ───────────────────────────────────────────
+
+    private EventResult handleNotificationsKey(dev.tamboui.tui.event.KeyEvent event) {
+        if (event.isCancel() || event.isChar('N')) {
+            controller.closeNotifications();
+            return EventResult.HANDLED;
+        }
+        if (event.isDown() || event.isChar('j')) { controller.moveNotificationDown(); return EventResult.HANDLED; }
+        if (event.isUp() || event.isChar('k'))   { controller.moveNotificationUp();   return EventResult.HANDLED; }
+        if (event.isChar('g') || event.code() == KeyCode.HOME) { controller.moveNotificationTop(); return EventResult.HANDLED; }
+        if (event.isChar('G') || event.code() == KeyCode.END)  { controller.moveNotificationBottom(); return EventResult.HANDLED; }
+        if (event.isChar('c')) { controller.clearNotifications(); return EventResult.HANDLED; }
         return EventResult.UNHANDLED;
     }
 

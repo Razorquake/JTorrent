@@ -110,6 +110,10 @@ public class GlobalStatsBar {
 
                         // ── Keybinding hints (right-aligned via spacer) ──────────
                         spacer(),
+                        inboxBadge(controller.unreadNotificationCount()),
+                        text("  "),
+                        text("[N] Inbox").dim(),
+                        text("  "),
                         text("[?] Help").dim(),
                         text("  "),
                         text("[q] Quit").dim(),
@@ -159,6 +163,13 @@ public class GlobalStatsBar {
         return liveConnected
                 ? text(" LIVE ").green().bold()
                 : text(" POLL ").yellow().bold();
+    }
+
+    private static Element inboxBadge(int unreadCount) {
+        if (unreadCount <= 0) {
+            return text(" 0 ").dim();
+        }
+        return text(" " + unreadCount + " ").cyan().bold();
     }
 
     /**

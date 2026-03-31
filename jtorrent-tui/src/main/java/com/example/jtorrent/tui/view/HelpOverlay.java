@@ -30,6 +30,7 @@ public class HelpOverlay {
                 text(" Actions").bold().cyan(),
                 row(text("  Enter").bold(),    text("    Open detail panel").dim()),
                 row(text("  o").bold(),        text("        Open operations / health overlay").dim()),
+                row(text("  N").bold(),        text("        Open notification history").dim()),
                 row(text("  a").bold(),        text("        Add torrent (magnet or file)").dim()),
                 row(text("  p").bold(),        text("        Pause selected torrent").dim()),
                 row(text("  r").bold(),        text("        Resume selected torrent").dim()),
@@ -56,6 +57,13 @@ public class HelpOverlay {
                 row(text("  r").bold(),        text("        Refresh health / storage / orphan data").dim()),
                 row(text("  j / k").bold(),    text("    Move orphan selection (Orphans tab)").dim()),
                 row(text("  c").bold(),        text("        Clean up orphaned files (Orphans tab)").dim()),
+                spacer(),
+                // ── Notifications ─────────────────────────────────────────
+                text(" Notifications").bold().cyan(),
+                row(text("  j / k").bold(),    text("    Move through notification history").dim()),
+                row(text("  g / G").bold(),    text("    Jump to newest / oldest notification").dim()),
+                row(text("  c").bold(),        text("        Clear notification history").dim()),
+                row(text("  Esc").bold(),      text("      Close notification history").dim()),
                 spacer(),
                 // ── Detail View ───────────────────────────────────────────
                 text(" Detail View").bold().cyan(),

@@ -2,6 +2,7 @@ package com.example.jtorrent.tui.controller;
 
 import com.example.jtorrent.tui.api.TorrentApiClient;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -44,6 +45,7 @@ public class AppController {
         LIST,
         DETAIL,
         OPS,
+        NOTIFICATIONS,
         ADD_DIALOG,
         CONFIRM_DELETE,
         HELP
@@ -183,6 +185,12 @@ public class AppController {
     /** Short message shown in the footer (e.g. "Paused", "Error: …"). Cleared on next poll. */
     private String          statusMessage   = null;
     private boolean         statusIsError   = false;
+
+    // --- Notification history ---
+    private final List<NotificationEntry> notifications = new ArrayList<>();
+    private int selectedNotificationIndex = 0;
+    private int unreadNotificationCount = 0;
+    private View notificationsReturnView = View.LIST;
 
     // --- Connection state ---
     /** True once at least one successful poll has completed. */
@@ -419,6 +427,29 @@ public class AppController {
         return statusMessage;
     }
 
+    /** Snapshot of notification history, newest first. */
+    public synchronized List<NotificationEntry> notifications() {
+        return List.copyOf(notifications);
+    }
+
+    /** Currently selected notification history row. */
+    public synchronized int selectedNotificationIndex() {
+        return selectedNotificationIndex;
+    }
+
+    /** Currently selected notification entry, or {@code null} if history is empty. */
+    public synchronized NotificationEntry selectedNotification() {
+        if (notifications.isEmpty() || selectedNotificationIndex >= notifications.size()) {
+            return null;
+        }
+        return notifications.get(selectedNotificationIndex);
+    }
+
+    /** Number of unread notification entries. */
+    public synchronized int unreadNotificationCount() {
+        return unreadNotificationCount;
+    }
+
     /** True if the current status message is an error (shown in red). */
     public synchronized boolean statusIsError() {
         return statusIsError;
@@ -514,6 +545,23 @@ public class AppController {
         activeView = View.LIST;
     }
 
+    /** Open the notification history overlay and remember where to return. */
+    public synchronized void openNotifications(View returnView) {
+        notificationsReturnView = returnView != null ? returnView : View.LIST;
+        activeView = View.NOTIFICATIONS;
+        selectedNotificationIndex = 0;
+        unreadNotificationCount = 0;
+        clampSelectedNotificationIndex();
+    }
+
+    /** Close the notification history overlay and return to the previous view. */
+    public synchronized void closeNotifications() {
+        activeView = notificationsReturnView != View.NOTIFICATIONS
+                ? notificationsReturnView
+                : View.LIST;
+        unreadNotificationCount = 0;
+    }
+
     /** Switch to the next operations tab. */
     public synchronized void nextOpsTab() {
         opsTab = (opsTab == OpsTab.OVERVIEW) ? OpsTab.ORPHANS : OpsTab.OVERVIEW;
@@ -601,6 +649,39 @@ public class AppController {
         }
     }
 
+    /** Move the notification selection one row up. */
+    public synchronized void moveNotificationUp() {
+        if (selectedNotificationIndex > 0) {
+            selectedNotificationIndex--;
+        }
+    }
+
+    /** Move the notification selection one row down. */
+    public synchronized void moveNotificationDown() {
+        if (selectedNotificationIndex < notifications.size() - 1) {
+            selectedNotificationIndex++;
+        }
+    }
+
+    /** Jump to the newest notification. */
+    public synchronized void moveNotificationTop() {
+        selectedNotificationIndex = 0;
+    }
+
+    /** Jump to the oldest notification. */
+    public synchronized void moveNotificationBottom() {
+        if (!notifications.isEmpty()) {
+            selectedNotificationIndex = notifications.size() - 1;
+        }
+    }
+
+    /** Clear the notification history. */
+    public synchronized void clearNotifications() {
+        notifications.clear();
+        selectedNotificationIndex = 0;
+        unreadNotificationCount = 0;
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // Commands — text input (filter bar)
     // ─────────────────────────────────────────────────────────────────────────
@@ -653,14 +734,26 @@ public class AppController {
 
     /** Show a success message in the footer. */
     public synchronized void setStatus(String message) {
+        setStatus(message, "TUI");
+    }
+
+    /** Show a success/info message with a source label. */
+    public synchronized void setStatus(String message, String source) {
         statusMessage = message;
         statusIsError = false;
+        recordNotification(message, false, source);
     }
 
     /** Show an error message in the footer (rendered red). */
     public synchronized void setError(String message) {
+        setError(message, "TUI");
+    }
+
+    /** Show an error message with a source label. */
+    public synchronized void setError(String message, String source) {
         statusMessage = message;
         statusIsError = true;
+        recordNotification(message, true, source);
     }
 
     /** Clear the footer status message. */
@@ -953,6 +1046,14 @@ public class AppController {
         }
     }
 
+    private void clampSelectedNotificationIndex() {
+        if (notifications.isEmpty()) {
+            selectedNotificationIndex = 0;
+        } else if (selectedNotificationIndex >= notifications.size()) {
+            selectedNotificationIndex = notifications.size() - 1;
+        }
+    }
+
     private void syncSelectedTorrentId() {
         if (torrents.isEmpty() || selectedIndex >= torrents.size()) {
             selectedTorrentId = null;
@@ -1100,5 +1201,70 @@ public class AppController {
 
     private static LocalDateTime safeDate(LocalDateTime value) {
         return value != null ? value : LocalDateTime.MIN;
+    }
+
+    private void recordNotification(String message, boolean error, String source) {
+        if (message == null || message.isBlank()) {
+            return;
+        }
+
+        String normalizedSource = source != null && !source.isBlank() ? source : "TUI";
+        LocalDateTime now = LocalDateTime.now();
+        NotificationEntry latest = notifications.isEmpty() ? null : notifications.get(0);
+        if (latest != null
+                && latest.error == error
+                && latest.message.equals(message)
+                && latest.source.equals(normalizedSource)
+                && Duration.between(latest.timestamp, now).abs().getSeconds() <= 10) {
+            return;
+        }
+
+        notifications.add(0, new NotificationEntry(now, normalizedSource, message, error));
+        if (notifications.size() > 100) {
+            notifications.remove(notifications.size() - 1);
+        }
+
+        if (activeView == View.NOTIFICATIONS) {
+            unreadNotificationCount = 0;
+            selectedNotificationIndex = 0;
+        } else {
+            unreadNotificationCount++;
+        }
+        clampSelectedNotificationIndex();
+    }
+
+    /** Immutable notification-history entry. */
+    public static final class NotificationEntry {
+        private final LocalDateTime timestamp;
+        private final String source;
+        private final String message;
+        private final boolean error;
+
+        public NotificationEntry(LocalDateTime timestamp, String source, String message, boolean error) {
+            this.timestamp = timestamp;
+            this.source = source != null && !source.isBlank() ? source : "TUI";
+            this.message = message != null ? message : "";
+            this.error = error;
+        }
+
+        public LocalDateTime timestamp() {
+            return timestamp;
+        }
+
+        public String source() {
+            return source;
+        }
+
+        public String message() {
+            return message;
+        }
+
+        public boolean isError() {
+            return error;
+        }
+
+        public String levelLabel() {
+            return error ? "ERROR" : "INFO";
+        }
     }
 }

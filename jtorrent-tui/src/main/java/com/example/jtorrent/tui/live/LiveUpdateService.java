@@ -200,7 +200,7 @@ public class LiveUpdateService {
             case "ERROR" -> {
                 controller.setLiveUpdatesConnected(false);
                 if (frame.body != null && !frame.body.isBlank()) {
-                    controller.setError("Live updates error: " + frame.body);
+                    controller.setError("Live updates error: " + frame.body, "Live");
                 }
             }
             default -> {
@@ -233,7 +233,7 @@ public class LiveUpdateService {
                             mapper.readValue(frame.body, LiveNotification.class);
                     controller.setLiveUpdatesConnected(true);
                     if (notification.message != null && !notification.message.isBlank()) {
-                        controller.setStatus(notification.message);
+                        controller.setStatus(notification.message, "Live");
                     }
                 }
                 default -> {

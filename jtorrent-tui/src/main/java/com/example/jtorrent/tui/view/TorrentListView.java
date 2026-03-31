@@ -367,7 +367,7 @@ public class TorrentListView {
 
         return text(
                 " [1-5] Views  [s] Sort  [S] Dir  [,] Prev Pg  [.] Next Pg" +
-                        "  [Enter] Details  [o] Ops  [a] Add  [p] Pause  [r] Resume" +
+                        "  [Enter] Details  [o] Ops  [N] Inbox  [a] Add  [p] Pause  [r] Resume" +
                         "  [d] Delete  [c] Recheck  [/] Search  [?] Help"
         ).dim();
     }
