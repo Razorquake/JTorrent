@@ -62,6 +62,7 @@ public class HelpOverlay {
                 text(" Notifications").bold().cyan(),
                 row(text("  j / k").bold(),    text("    Move through notification history").dim()),
                 row(text("  g / G").bold(),    text("    Jump to newest / oldest notification").dim()),
+                row(text("  Enter").bold(),    text("    Run selected notification action").dim()),
                 row(text("  c").bold(),        text("        Clear notification history").dim()),
                 row(text("  Esc").bold(),      text("      Close notification history").dim()),
                 spacer(),

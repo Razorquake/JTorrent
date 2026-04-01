@@ -340,6 +340,10 @@ public class JTorrentApp extends ToolkitApp {
             controller.closeNotifications();
             return EventResult.HANDLED;
         }
+        if (event.isSelect()) {
+            activateSelectedNotification();
+            return EventResult.HANDLED;
+        }
         if (event.isDown() || event.isChar('j')) { controller.moveNotificationDown(); return EventResult.HANDLED; }
         if (event.isUp() || event.isChar('k'))   { controller.moveNotificationUp();   return EventResult.HANDLED; }
         if (event.isChar('g') || event.code() == KeyCode.HOME) { controller.moveNotificationTop(); return EventResult.HANDLED; }
@@ -492,7 +496,12 @@ public class JTorrentApp extends ToolkitApp {
 
                 TorrentApiClient.AddTorrentResponse finalResponse = response;
                 runOnRender(() -> {
-                    controller.setStatus(formatAddSuccess(finalResponse));
+                    controller.setStatus(
+                            formatAddSuccess(finalResponse),
+                            "Add",
+                            AppController.NotificationAction.openTorrentDetail(
+                                    finalResponse.torrentId,
+                                    "Open added torrent"));
                     requestListRefresh();
                 });
             } catch (TorrentApiClient.ApiException e) {
@@ -592,11 +601,17 @@ public class JTorrentApp extends ToolkitApp {
             try {
                 TorrentApiClient.CleanupOrphansResponse response = client.cleanupOrphanedFiles();
                 runOnRender(() -> {
-                    controller.setStatus(formatCleanupMessage(response));
+                    controller.setStatus(
+                            formatCleanupMessage(response),
+                            "Ops",
+                            AppController.NotificationAction.openOpsOrphans());
                     requestOpsRefresh();
                 });
             } catch (TorrentApiClient.ApiException e) {
-                runOnRender(() -> controller.setError("Cleanup failed: " + e.getMessage()));
+                runOnRender(() -> controller.setError(
+                        "Cleanup failed: " + e.getMessage(),
+                        "Ops",
+                        AppController.NotificationAction.openOpsOrphans()));
             }
         });
     }
@@ -743,6 +758,31 @@ public class JTorrentApp extends ToolkitApp {
 
         var t = controller.selectedTorrent();
         return t != null ? t.id : null;
+    }
+
+    private void activateSelectedNotification() {
+        AppController.NotificationAction action = controller.selectedNotificationAction();
+        if (action == null) {
+            return;
+        }
+
+        switch (action.type()) {
+            case OPEN_TORRENT_DETAIL -> {
+                if (action.torrentId() == null) {
+                    return;
+                }
+                controller.openDetailByTorrentId(action.torrentId());
+                requestDetailRefresh(action.torrentId());
+            }
+            case OPEN_OPS_ORPHANS -> {
+                controller.openOpsOrphans();
+                requestOpsRefresh();
+            }
+            case RETRY_LIVE_UPDATES -> {
+                controller.setStatus("Retrying live connection...", "Live");
+                liveUpdates.reconnectNow();
+            }
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────

@@ -43,6 +43,7 @@ public class LiveUpdateService {
             });
 
     private final AtomicBoolean reconnectScheduled = new AtomicBoolean(false);
+    private final AtomicBoolean disconnectNotificationSent = new AtomicBoolean(false);
 
     private volatile boolean running = false;
     private volatile WebSocket webSocket;
@@ -60,6 +61,7 @@ public class LiveUpdateService {
 
     public void start() {
         running = true;
+        disconnectNotificationSent.set(false);
         scheduler.execute(this::connect);
     }
 
@@ -78,6 +80,30 @@ public class LiveUpdateService {
         scheduler.shutdownNow();
     }
 
+    public void reconnectNow() {
+        if (!running || scheduler.isShutdown()) {
+            return;
+        }
+
+        disconnectNotificationSent.set(false);
+        scheduler.execute(() -> {
+            reconnectScheduled.set(false);
+            controller.setLiveUpdatesConnected(false);
+
+            WebSocket socket = webSocket;
+            webSocket = null;
+            if (socket != null) {
+                try {
+                    socket.abort();
+                } catch (Exception ignored) {
+                    // Best-effort close before reconnecting immediately.
+                }
+            }
+
+            connect();
+        });
+    }
+
     private void connect() {
         if (!running) {
             return;
@@ -93,7 +119,7 @@ public class LiveUpdateService {
                     .whenComplete((socket, error) -> {
                         if (error != null) {
                             log.debug("Live-update websocket connect failed: {}", error.getMessage());
-                            controller.setLiveUpdatesConnected(false);
+                            markLiveDisconnected("Live updates unavailable. Open Notifications and press Enter to retry.");
                             scheduleReconnect();
                             return;
                         }
@@ -101,7 +127,7 @@ public class LiveUpdateService {
                     });
         } catch (Exception e) {
             log.debug("Failed to prepare live-update websocket connection: {}", e.getMessage());
-            controller.setLiveUpdatesConnected(false);
+            markLiveDisconnected("Live updates unavailable. Open Notifications and press Enter to retry.");
             scheduleReconnect();
         }
     }
@@ -171,7 +197,7 @@ public class LiveUpdateService {
             return;
         }
         if (payload.startsWith("c")) {
-            controller.setLiveUpdatesConnected(false);
+            markLiveDisconnected("Live updates disconnected. Open Notifications and press Enter to retry.");
             scheduleReconnect();
             return;
         }
@@ -194,13 +220,20 @@ public class LiveUpdateService {
         switch (frame.command) {
             case "CONNECTED" -> {
                 controller.setLiveUpdatesConnected(true);
+                disconnectNotificationSent.set(false);
                 subscribeToTopics();
             }
             case "MESSAGE" -> handleStompMessage(frame);
             case "ERROR" -> {
-                controller.setLiveUpdatesConnected(false);
+                String message = frame.body != null && !frame.body.isBlank()
+                        ? "Live updates error: " + frame.body
+                        : "Live updates disconnected. Open Notifications and press Enter to retry.";
+                markLiveDisconnected(message);
                 if (frame.body != null && !frame.body.isBlank()) {
-                    controller.setError("Live updates error: " + frame.body, "Live");
+                    controller.setError(
+                            "Live updates error: " + frame.body,
+                            "Live",
+                            AppController.NotificationAction.retryLiveUpdates());
                 }
             }
             default -> {
@@ -221,19 +254,25 @@ public class LiveUpdateService {
                     TorrentApiClient.TorrentResponse[] torrents =
                             mapper.readValue(frame.body, TorrentApiClient.TorrentResponse[].class);
                     controller.setLiveTorrentSnapshot(List.of(torrents));
+                    disconnectNotificationSent.set(false);
                 }
                 case "/topic/stats" -> {
                     TorrentApiClient.StatsResponse stats =
                             mapper.readValue(frame.body, TorrentApiClient.StatsResponse.class);
                     controller.setStats(stats);
                     controller.setLiveUpdatesConnected(true);
+                    disconnectNotificationSent.set(false);
                 }
                 case "/topic/notifications" -> {
                     LiveNotification notification =
                             mapper.readValue(frame.body, LiveNotification.class);
                     controller.setLiveUpdatesConnected(true);
+                    disconnectNotificationSent.set(false);
                     if (notification.message != null && !notification.message.isBlank()) {
-                        controller.setStatus(notification.message, "Live");
+                        controller.setStatus(
+                                notification.message,
+                                "Live",
+                                buildNotificationAction(notification));
                     }
                 }
                 default -> {
@@ -243,6 +282,29 @@ public class LiveUpdateService {
         } catch (Exception e) {
             log.debug("Failed to parse live-update message for {}: {}", destination, e.getMessage());
         }
+    }
+
+    private void markLiveDisconnected(String message) {
+        controller.setLiveUpdatesConnected(false);
+        if (!running || !disconnectNotificationSent.compareAndSet(false, true)) {
+            return;
+        }
+        controller.setError(message, "Live", AppController.NotificationAction.retryLiveUpdates());
+    }
+
+    private AppController.NotificationAction buildNotificationAction(LiveNotification notification) {
+        if (notification == null) {
+            return null;
+        }
+        return switch (notification.event != null ? notification.event : "") {
+            case "torrent_added" -> AppController.NotificationAction.openTorrentDetail(
+                    notification.torrentId,
+                    "Open added torrent");
+            case "torrent_completed" -> AppController.NotificationAction.openTorrentDetail(
+                    notification.torrentId,
+                    "Open completed torrent");
+            default -> null;
+        };
     }
 
     private URI buildSockJsWebSocketUri() {
@@ -302,7 +364,7 @@ public class LiveUpdateService {
         @Override
         public CompletionStage<?> onClose(WebSocket webSocket, int statusCode, String reason) {
             LiveUpdateService.this.webSocket = null;
-            controller.setLiveUpdatesConnected(false);
+            markLiveDisconnected("Live updates disconnected. Open Notifications and press Enter to retry.");
             scheduleReconnect();
             return WebSocket.Listener.super.onClose(webSocket, statusCode, reason);
         }
@@ -310,7 +372,7 @@ public class LiveUpdateService {
         @Override
         public void onError(WebSocket webSocket, Throwable error) {
             LiveUpdateService.this.webSocket = null;
-            controller.setLiveUpdatesConnected(false);
+            markLiveDisconnected("Live updates disconnected. Open Notifications and press Enter to retry.");
             scheduleReconnect();
         }
     }

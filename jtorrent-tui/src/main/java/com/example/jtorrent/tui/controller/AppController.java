@@ -8,6 +8,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.Collections;
 import java.util.List;
+import java.util.Objects;
 
 /**
  * TamboUI Controller for the JTorrent TUI.
@@ -125,6 +126,15 @@ public class AppController {
         public String label() {
             return label;
         }
+    }
+
+    /**
+     * Quick actions that can be attached to notification-history entries.
+     */
+    public enum NotificationActionType {
+        OPEN_TORRENT_DETAIL,
+        OPEN_OPS_ORPHANS,
+        RETRY_LIVE_UPDATES
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -445,6 +455,12 @@ public class AppController {
         return notifications.get(selectedNotificationIndex);
     }
 
+    /** Quick action attached to the currently selected notification, or {@code null}. */
+    public synchronized NotificationAction selectedNotificationAction() {
+        NotificationEntry entry = selectedNotification();
+        return entry != null ? entry.action() : null;
+    }
+
     /** Number of unread notification entries. */
     public synchronized int unreadNotificationCount() {
         return unreadNotificationCount;
@@ -506,12 +522,18 @@ public class AppController {
         if (selected == null || selected.id == null) {
             return;
         }
+        openDetailByTorrentId(selected.id);
+    }
+
+    /** Open the detail panel for a specific torrent ID. */
+    public synchronized void openDetailByTorrentId(long torrentId) {
+        selectTorrentById(torrentId);
 
         activeView = View.DETAIL;
         detailTab = DetailTab.OVERVIEW;
         selectedFileIndex = 0;
-        detailTorrentId = selected.id;
-        detailTorrent = selected;
+        detailTorrentId = torrentId;
+        detailTorrent = findTorrentById(torrentId);
         detailStats = null;
         detailEta = null;
         detailRatio = null;
@@ -535,6 +557,14 @@ public class AppController {
     /** Open the operations / health overlay. */
     public synchronized void openOps() {
         opsTab = OpsTab.OVERVIEW;
+        opsLoading = true;
+        opsError = null;
+        activeView = View.OPS;
+    }
+
+    /** Open the operations / health overlay directly on the orphan-cleanup tab. */
+    public synchronized void openOpsOrphans() {
+        opsTab = OpsTab.ORPHANS;
         opsLoading = true;
         opsError = null;
         activeView = View.OPS;
@@ -741,7 +771,14 @@ public class AppController {
     public synchronized void setStatus(String message, String source) {
         statusMessage = message;
         statusIsError = false;
-        recordNotification(message, false, source);
+        recordNotification(message, false, source, null);
+    }
+
+    /** Show a success/info message with an optional quick action. */
+    public synchronized void setStatus(String message, String source, NotificationAction action) {
+        statusMessage = message;
+        statusIsError = false;
+        recordNotification(message, false, source, action);
     }
 
     /** Show an error message in the footer (rendered red). */
@@ -753,7 +790,14 @@ public class AppController {
     public synchronized void setError(String message, String source) {
         statusMessage = message;
         statusIsError = true;
-        recordNotification(message, true, source);
+        recordNotification(message, true, source, null);
+    }
+
+    /** Show an error message with an optional quick action. */
+    public synchronized void setError(String message, String source, NotificationAction action) {
+        statusMessage = message;
+        statusIsError = true;
+        recordNotification(message, true, source, action);
     }
 
     /** Clear the footer status message. */
@@ -1203,7 +1247,7 @@ public class AppController {
         return value != null ? value : LocalDateTime.MIN;
     }
 
-    private void recordNotification(String message, boolean error, String source) {
+    private void recordNotification(String message, boolean error, String source, NotificationAction action) {
         if (message == null || message.isBlank()) {
             return;
         }
@@ -1215,11 +1259,12 @@ public class AppController {
                 && latest.error == error
                 && latest.message.equals(message)
                 && latest.source.equals(normalizedSource)
+                && Objects.equals(latest.action, action)
                 && Duration.between(latest.timestamp, now).abs().getSeconds() <= 10) {
             return;
         }
 
-        notifications.add(0, new NotificationEntry(now, normalizedSource, message, error));
+        notifications.add(0, new NotificationEntry(now, normalizedSource, message, error, action));
         if (notifications.size() > 100) {
             notifications.remove(notifications.size() - 1);
         }
@@ -1233,18 +1278,77 @@ public class AppController {
         clampSelectedNotificationIndex();
     }
 
+    private void selectTorrentById(long torrentId) {
+        selectedTorrentId = torrentId;
+        for (int i = 0; i < torrents.size(); i++) {
+            if (Objects.equals(torrents.get(i).id, torrentId)) {
+                selectedIndex = i;
+                return;
+            }
+        }
+    }
+
+    private TorrentApiClient.TorrentResponse findTorrentById(long torrentId) {
+        for (TorrentApiClient.TorrentResponse torrent : torrents) {
+            if (Objects.equals(torrent.id, torrentId)) {
+                return torrent;
+            }
+        }
+        for (TorrentApiClient.TorrentResponse torrent : liveTorrentSnapshot) {
+            if (Objects.equals(torrent.id, torrentId)) {
+                return torrent;
+            }
+        }
+        return null;
+    }
+
+    /** Immutable quick action attached to a notification entry. */
+    public record NotificationAction(NotificationActionType type, String label, Long torrentId) {
+        public NotificationAction {
+            type = Objects.requireNonNull(type, "type");
+            label = label != null && !label.isBlank() ? label : defaultLabel(type);
+        }
+
+        public static NotificationAction openTorrentDetail(Long torrentId, String label) {
+            return torrentId != null ? new NotificationAction(NotificationActionType.OPEN_TORRENT_DETAIL, label, torrentId) : null;
+        }
+
+        public static NotificationAction openOpsOrphans() {
+            return new NotificationAction(NotificationActionType.OPEN_OPS_ORPHANS, "Open orphan cleanup", null);
+        }
+
+        public static NotificationAction retryLiveUpdates() {
+            return new NotificationAction(NotificationActionType.RETRY_LIVE_UPDATES, "Retry live connection", null);
+        }
+
+        private static String defaultLabel(NotificationActionType type) {
+            return switch (type) {
+                case OPEN_TORRENT_DETAIL -> "Open torrent detail";
+                case OPEN_OPS_ORPHANS -> "Open orphan cleanup";
+                case RETRY_LIVE_UPDATES -> "Retry live connection";
+            };
+        }
+    }
+
     /** Immutable notification-history entry. */
     public static final class NotificationEntry {
         private final LocalDateTime timestamp;
         private final String source;
         private final String message;
         private final boolean error;
+        private final NotificationAction action;
 
-        public NotificationEntry(LocalDateTime timestamp, String source, String message, boolean error) {
+        public NotificationEntry(
+                LocalDateTime timestamp,
+                String source,
+                String message,
+                boolean error,
+                NotificationAction action) {
             this.timestamp = timestamp;
             this.source = source != null && !source.isBlank() ? source : "TUI";
             this.message = message != null ? message : "";
             this.error = error;
+            this.action = action;
         }
 
         public LocalDateTime timestamp() {
@@ -1261,6 +1365,14 @@ public class AppController {
 
         public boolean isError() {
             return error;
+        }
+
+        public NotificationAction action() {
+            return action;
+        }
+
+        public boolean hasAction() {
+            return action != null;
         }
 
         public String levelLabel() {

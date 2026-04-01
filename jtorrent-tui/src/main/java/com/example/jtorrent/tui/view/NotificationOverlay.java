@@ -34,6 +34,7 @@ public class NotificationOverlay {
 
     public Element render() {
         List<AppController.NotificationEntry> notifications = controller.notifications();
+        AppController.NotificationEntry selected = controller.selectedNotification();
         if (!notifications.isEmpty()) {
             tableState.select(controller.selectedNotificationIndex());
         }
@@ -42,8 +43,9 @@ public class NotificationOverlay {
                 buildTitle(),
                 buildSummaryRow(notifications.size()),
                 buildBody(notifications),
+                buildActionRow(selected),
                 spacer(),
-                buildFooter()
+                buildFooter(selected)
         )
                 .rounded()
                 .id("notification-overlay")
@@ -116,10 +118,28 @@ public class NotificationOverlay {
         );
     }
 
-    private Element buildFooter() {
+    private Element buildActionRow(AppController.NotificationEntry selected) {
+        if (selected == null) {
+            return text("  No quick action for the selected entry.").dim();
+        }
+        if (!selected.hasAction()) {
+            return text("  Selected entry has no quick action.").dim();
+        }
+
+        return row(
+                text("  Action: ").dim(),
+                text("[Enter] ").cyan().bold(),
+                text(selected.action().label()).bold()
+        );
+    }
+
+    private Element buildFooter(AppController.NotificationEntry selected) {
         return row(
                 text(" [j / k] Move  ").dim(),
                 text("[g / G] Top/Bottom  ").dim(),
+                selected != null && selected.hasAction()
+                        ? text("[Enter] Run action  ").cyan()
+                        : text("[Enter] No action  ").dim(),
                 text("[c] Clear history  ").cyan(),
                 text("[Esc] Back").dim()
         );

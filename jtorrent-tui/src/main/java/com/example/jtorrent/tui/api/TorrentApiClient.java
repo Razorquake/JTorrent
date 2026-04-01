@@ -20,6 +20,7 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -626,7 +627,7 @@ public class TorrentApiClient {
         if (fileIds == null) {
             throw new IllegalArgumentException("fileIds must not be null");
         }
-        return fileIds.stream().filter(id -> id != null).toList();
+        return fileIds.stream().filter(Objects::nonNull).toList();
     }
 
     private String writeJson(Object value) throws ApiException {
